@@ -18,6 +18,8 @@ from kiro.converters_responses import (
     build_kiro_payload,
     convert_responses_input_to_unified,
     convert_responses_tools_to_unified,
+    collect_unified_tools,
+    collect_custom_tool_names,
     extract_thinking_config_from_responses,
     _normalize_content_parts,
 )
@@ -155,6 +157,39 @@ class TestConvertResponsesInput:
         args = unified[0].tool_calls[0]["function"]["arguments"]
         assert json.loads(args) == {"a": 1}
 
+    def test_custom_tool_call_wraps_freeform_input(self):
+        """
+        What it does: a custom_tool_call's freeform `input` is wrapped as
+        {"input": "<raw text>"} in the unified tool_call arguments.
+        Purpose: keep Kiro history consistent with the synthesized schema so a
+        replayed exec call round-trips correctly.
+        """
+        from kiro.converters_responses import CUSTOM_TOOL_INPUT_KEY
+        req = ResponsesRequest(model="m", input=[
+            {"type": "custom_tool_call", "call_id": "ctc_1", "name": "exec",
+             "input": 'print("hi")'},
+        ])
+        _, unified = convert_responses_input_to_unified(req)
+        assistant = [m for m in unified if m.role == "assistant"]
+        assert len(assistant) == 1
+        tc = assistant[0].tool_calls[0]
+        assert tc["id"] == "ctc_1"
+        assert tc["function"]["name"] == "exec"
+        assert json.loads(tc["function"]["arguments"]) == {CUSTOM_TOOL_INPUT_KEY: 'print("hi")'}
+
+    def test_custom_tool_call_output_becomes_tool_result(self):
+        """
+        What it does: a custom_tool_call_output becomes a user tool_result.
+        Purpose: exec results must pair back with the call_id.
+        """
+        req = ResponsesRequest(model="m", input=[
+            {"type": "custom_tool_call_output", "call_id": "ctc_1", "output": "hi\n"},
+        ])
+        _, unified = convert_responses_input_to_unified(req)
+        tr = unified[0].tool_results[0]
+        assert tr["tool_use_id"] == "ctc_1"
+        assert tr["content"] == "hi\n"
+
 
 # ==================================================================================================
 # _normalize_content_parts
@@ -210,6 +245,152 @@ class TestConvertResponsesTools:
     def test_empty_returns_none(self):
         assert convert_responses_tools_to_unified(None) is None
         assert convert_responses_tools_to_unified([]) is None
+
+    def test_namespace_tool_is_flattened(self):
+        """
+        What it does: a `namespace` tool's sub-tools are flattened by bare name.
+        Purpose: Codex groups sub-agent tools under a namespace; the model calls
+        them by bare name, so no prefix must be added.
+        """
+        tools = [{
+            "type": "namespace",
+            "name": "collaboration",
+            "tools": [
+                {"type": "function", "name": "spawn_agent",
+                 "parameters": {"type": "object"}},
+                {"type": "function", "name": "list_agents",
+                 "parameters": {"type": "object"}},
+            ],
+        }]
+        unified = convert_responses_tools_to_unified(tools)
+        assert len(unified) == 2
+        assert {t.name for t in unified} == {"spawn_agent", "list_agents"}
+
+    def test_custom_grammar_tool_is_synthesized(self):
+        """
+        What it does: grammar-based `custom` tools (e.g. exec) are synthesized
+        into a JSON-schema function with a single `input` string field.
+        Purpose: Kiro only accepts JSON-schema functions; we wrap the freeform
+        payload so the tool remains usable instead of being dropped.
+        """
+        from kiro.converters_responses import CUSTOM_TOOL_INPUT_KEY
+        tools = [
+            {"type": "custom", "name": "exec",
+             "description": "Run JS",
+             "format": {"type": "grammar", "syntax": "lark", "definition": "..."}},
+            {"type": "function", "name": "wait", "parameters": {"type": "object"}},
+        ]
+        unified = convert_responses_tools_to_unified(tools)
+        assert {t.name for t in unified} == {"exec", "wait"}
+        exec_tool = next(t for t in unified if t.name == "exec")
+        # synthesized schema: single required string field
+        props = exec_tool.input_schema["properties"]
+        assert CUSTOM_TOOL_INPUT_KEY in props
+        assert props[CUSTOM_TOOL_INPUT_KEY]["type"] == "string"
+        assert exec_tool.input_schema["required"] == [CUSTOM_TOOL_INPUT_KEY]
+        # original description is preserved in the synthesized one
+        assert "Run JS" in exec_tool.description
+
+    def test_mixed_dicts_and_tool_objects(self):
+        """
+        What it does: raw dicts and ResponsesTool objects mix freely.
+        Purpose: additional_tools carries raw dicts; top-level uses objects.
+        """
+        tools = [
+            ResponsesTool(type="function", name="a", parameters={"type": "object"}),
+            {"type": "function", "name": "b", "parameters": {"type": "object"}},
+        ]
+        unified = convert_responses_tools_to_unified(tools)
+        assert {t.name for t in unified} == {"a", "b"}
+
+
+# ==================================================================================================
+# collect_unified_tools (Codex additional_tools support)
+# ==================================================================================================
+
+class TestCollectUnifiedTools:
+    def test_additional_tools_item_is_collected(self):
+        """
+        What it does: tools embedded in an `additional_tools` input item are found.
+        Purpose: Codex CLI does NOT use the top-level `tools` field - it embeds
+        tools in input[0]. This is the root cause of "tool not found" in Codex.
+        """
+        req = ResponsesRequest(model="m", input=[
+            {
+                "type": "additional_tools",
+                "role": "developer",
+                "tools": [
+                    {"type": "custom", "name": "exec",
+                     "format": {"type": "grammar", "syntax": "lark", "definition": "x"}},
+                    {"type": "function", "name": "wait",
+                     "parameters": {"type": "object"}},
+                    {"type": "function", "name": "request_user_input",
+                     "parameters": {"type": "object"}},
+                    {"type": "namespace", "name": "collaboration", "tools": [
+                        {"type": "function", "name": "followup_task",
+                         "parameters": {"type": "object"}},
+                        {"type": "function", "name": "spawn_agent",
+                         "parameters": {"type": "object"}},
+                    ]},
+                ],
+            },
+            {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "hi"}]},
+        ])
+        unified = collect_unified_tools(req)
+        # exec (custom) synthesized; + wait + request_user_input + 2 namespace = 5
+        assert unified is not None
+        names = {t.name for t in unified}
+        assert names == {"exec", "wait", "request_user_input", "followup_task", "spawn_agent"}
+
+    def test_top_level_and_additional_tools_merge(self):
+        """
+        What it does: tools from top-level `tools` and `additional_tools` combine.
+        Purpose: don't lose either source.
+        """
+        req = ResponsesRequest(
+            model="m",
+            tools=[ResponsesTool(type="function", name="top",
+                                 parameters={"type": "object"})],
+            input=[{
+                "type": "additional_tools", "role": "developer",
+                "tools": [{"type": "function", "name": "embedded",
+                           "parameters": {"type": "object"}}],
+            }],
+        )
+        unified = collect_unified_tools(req)
+        assert {t.name for t in unified} == {"top", "embedded"}
+
+    def test_no_tools_returns_none(self):
+        req = ResponsesRequest(model="m", input="hello")
+        assert collect_unified_tools(req) is None
+
+
+class TestCollectCustomToolNames:
+    def test_finds_custom_tools_in_additional_tools(self):
+        """
+        What it does: custom tool names are collected from additional_tools,
+        descending into namespaces; function tools are NOT included.
+        Purpose: the streaming layer needs this set to emit custom_tool_call
+        events for the right tools.
+        """
+        req = ResponsesRequest(model="m", input=[
+            {"type": "additional_tools", "role": "developer", "tools": [
+                {"type": "custom", "name": "exec", "format": {"type": "text"}},
+                {"type": "function", "name": "wait", "parameters": {"type": "object"}},
+                {"type": "namespace", "name": "ns", "tools": [
+                    {"type": "custom", "name": "apply_patch", "format": {"type": "text"}},
+                    {"type": "function", "name": "spawn_agent",
+                     "parameters": {"type": "object"}},
+                ]},
+            ]},
+        ])
+        names = collect_custom_tool_names(req)
+        assert names == {"exec", "apply_patch"}
+
+    def test_empty_when_no_custom_tools(self):
+        req = ResponsesRequest(model="m", input="hi")
+        assert collect_custom_tool_names(req) == set()
 
 
 # ==================================================================================================

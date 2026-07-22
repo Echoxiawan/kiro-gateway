@@ -86,6 +86,39 @@ def _new_item_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
+def _unwrap_custom_tool_input(arguments: str) -> str:
+    """
+    Unwrap the freeform text of a custom tool from its synthesized JSON arguments.
+
+    A `custom` tool is presented to the model as a JSON-schema function with a
+    single `input` string field (see converters_responses._synthesize_custom_tool).
+    The model therefore returns arguments like {"input": "<raw text>"}. Codex
+    expects the raw text back in the `custom_tool_call.input` field, so we unwrap.
+
+    Best-effort: if arguments are not the expected wrapped shape (malformed JSON,
+    or the model emitted the payload directly), we fall back to the raw string so
+    no data is lost.
+
+    Args:
+        arguments: JSON arguments string from the tool call
+
+    Returns:
+        The freeform text payload for the custom tool
+    """
+    from kiro.converters_responses import CUSTOM_TOOL_INPUT_KEY
+
+    if not arguments:
+        return ""
+    try:
+        parsed = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        return arguments
+    if isinstance(parsed, dict) and CUSTOM_TOOL_INPUT_KEY in parsed:
+        value = parsed[CUSTOM_TOOL_INPUT_KEY]
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return arguments
+
+
 class _ResponsesStreamState:
     """
     Holds counters and emit helpers for building the Responses SSE event stream.
@@ -293,6 +326,37 @@ class _ResponsesStreamState:
             yield self._sse("response.output_item.done", {"output_index": oidx, "item": item})
         return gen()
 
+    def add_custom_tool_call(self, call_id: str, name: str, tool_input: str) -> AsyncGenerator[str, None]:
+        """
+        Emit a freeform `custom_tool_call` item (e.g. Codex `exec`, `apply_patch`).
+
+        Unlike function calls, custom tools carry raw text in `input` (not JSON
+        `arguments`), and use the `response.custom_tool_call_input.*` event names.
+        """
+        async def gen():
+            async for c in self._close_current():
+                yield c
+            item_id = _new_item_id("ctc")
+            oidx = self.output_index
+            self.output_index += 1
+            call_id_final = call_id or _new_item_id("call")
+            yield self._sse("response.output_item.added", {
+                "output_index": oidx,
+                "item": {"id": item_id, "type": "custom_tool_call", "status": "in_progress",
+                         "call_id": call_id_final, "name": name, "input": ""},
+            })
+            yield self._sse("response.custom_tool_call_input.delta", {
+                "item_id": item_id, "output_index": oidx, "delta": tool_input,
+            })
+            yield self._sse("response.custom_tool_call_input.done", {
+                "item_id": item_id, "output_index": oidx, "input": tool_input,
+            })
+            item = {"id": item_id, "type": "custom_tool_call", "status": "completed",
+                    "call_id": call_id_final, "name": name, "input": tool_input}
+            self.output_items.append(item)
+            yield self._sse("response.output_item.done", {"output_index": oidx, "item": item})
+        return gen()
+
     def finish(self, usage: Dict[str, Any], status: str = "completed") -> AsyncGenerator[str, None]:
         async def gen():
             async for c in self.ensure_created():
@@ -312,13 +376,20 @@ async def stream_kiro_to_responses_internal(
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
+    custom_tool_names: Optional[set] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Internal generator converting a Kiro stream to Responses API SSE events.
 
+    Args:
+        custom_tool_names: Names of tools that were freeform `custom` tools. Calls
+            to these are emitted as `custom_tool_call` items (raw text input)
+            instead of `function_call` items (JSON arguments).
+
     Raises:
         FirstTokenTimeoutError: If first token not received within timeout
     """
+    custom_tool_names = custom_tool_names or set()
     state = _ResponsesStreamState(model, int(time.time()))
 
     full_content = ""
@@ -353,7 +424,9 @@ async def stream_kiro_to_responses_internal(
         bracket_tool_calls = parse_bracket_tool_calls(full_content)
         all_tool_calls = deduplicate_tool_calls(tool_calls_from_stream + bracket_tool_calls)
 
-        # Emit function_call items (each is a self-contained item)
+        # Emit tool call items (each is a self-contained item). Freeform `custom`
+        # tools become custom_tool_call items with unwrapped raw-text input; all
+        # others become ordinary function_call items.
         for tc in all_tool_calls:
             func = tc.get("function") or {}
             name = func.get("name") or tc.get("name") or ""
@@ -363,8 +436,13 @@ async def stream_kiro_to_responses_internal(
                 arguments = json.dumps(raw_input, ensure_ascii=False) if raw_input else "{}"
             if not isinstance(arguments, str):
                 arguments = json.dumps(arguments, ensure_ascii=False)
-            async for c in state.add_function_call(tc.get("id", ""), name, arguments or "{}"):
-                yield c
+            if name in custom_tool_names:
+                tool_input = _unwrap_custom_tool_input(arguments or "{}")
+                async for c in state.add_custom_tool_call(tc.get("id", ""), name, tool_input):
+                    yield c
+            else:
+                async for c in state.add_function_call(tc.get("id", ""), name, arguments or "{}"):
+                    yield c
 
         # Token accounting (same approach as the OpenAI path)
         completion_tokens = count_tokens(full_content + full_thinking)
@@ -421,11 +499,13 @@ async def stream_kiro_to_responses(
     auth_manager: "KiroAuthManager",
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
+    custom_tool_names: Optional[set] = None,
 ) -> AsyncGenerator[str, None]:
     """Non-retrying wrapper over stream_kiro_to_responses_internal."""
     async for chunk in stream_kiro_to_responses_internal(
         client, response, model, model_cache, auth_manager,
         request_messages=request_messages, request_tools=request_tools,
+        custom_tool_names=custom_tool_names,
     ):
         yield chunk
 
@@ -441,6 +521,7 @@ async def stream_responses_with_first_token_retry(
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
+    custom_tool_names: Optional[set] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming with automatic retry on first token timeout (Responses format)."""
 
@@ -458,6 +539,7 @@ async def stream_responses_with_first_token_retry(
             client, resp, model, model_cache, auth_manager,
             first_token_timeout=first_token_timeout,
             request_messages=request_messages, request_tools=request_tools,
+            custom_tool_names=custom_tool_names,
         ):
             yield chunk
 
@@ -481,15 +563,22 @@ async def collect_responses_response(
     auth_manager: "KiroAuthManager",
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
+    custom_tool_names: Optional[set] = None,
 ) -> dict:
     """
     Collect a full non-streaming Responses API response object.
 
     Consumes the Kiro stream, accumulates content/reasoning/tool calls, and
     builds the final `response` object with output items and usage.
+
+    Args:
+        custom_tool_names: Names of freeform `custom` tools. Calls to these become
+            `custom_tool_call` output items (raw text input) instead of
+            `function_call` items (JSON arguments).
     """
     from kiro.streaming_core import collect_stream_to_result
 
+    custom_tool_names = custom_tool_names or set()
     result = await collect_stream_to_result(response)
 
     output_items: List[Dict[str, Any]] = []
@@ -519,14 +608,24 @@ async def collect_responses_response(
             arguments = json.dumps(raw_input, ensure_ascii=False) if raw_input else "{}"
         if not isinstance(arguments, str):
             arguments = json.dumps(arguments, ensure_ascii=False)
-        output_items.append({
-            "id": _new_item_id("fc"),
-            "type": "function_call",
-            "status": "completed",
-            "call_id": tc.get("id") or _new_item_id("call"),
-            "name": name,
-            "arguments": arguments or "{}",
-        })
+        if name in custom_tool_names:
+            output_items.append({
+                "id": _new_item_id("ctc"),
+                "type": "custom_tool_call",
+                "status": "completed",
+                "call_id": tc.get("id") or _new_item_id("call"),
+                "name": name,
+                "input": _unwrap_custom_tool_input(arguments or "{}"),
+            })
+        else:
+            output_items.append({
+                "id": _new_item_id("fc"),
+                "type": "function_call",
+                "status": "completed",
+                "call_id": tc.get("id") or _new_item_id("call"),
+                "name": name,
+                "arguments": arguments or "{}",
+            })
 
     completion_tokens = count_tokens(result.content + result.thinking_content)
     prompt_tokens, total_tokens, prompt_source, _ = calculate_tokens_from_context_usage(

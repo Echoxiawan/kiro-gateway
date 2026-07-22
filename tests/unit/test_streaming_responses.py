@@ -38,7 +38,7 @@ def _parse_sse(chunks):
     return events
 
 
-async def _run(events, monkeypatch, model="claude-sonnet-4.5"):
+async def _run(events, monkeypatch, model="claude-sonnet-4.5", custom_tool_names=None):
     """Drive the internal generator with a fake parse_kiro_stream."""
     async def fake_parse_kiro_stream(response, first_token_timeout, *a, **kw):
         for e in events:
@@ -54,6 +54,7 @@ async def _run(events, monkeypatch, model="claude-sonnet-4.5"):
     async for chunk in streaming_responses.stream_kiro_to_responses_internal(
         client=None, response=_FakeResponse(), model=model,
         model_cache=_Cache(), auth_manager=None,
+        custom_tool_names=custom_tool_names,
     ):
         chunks.append(chunk)
     return _parse_sse(chunks)
@@ -152,6 +153,56 @@ class TestResponsesStreaming:
         assert fc[0]["call_id"] == "call_1"
         assert fc[0]["name"] == "shell"
         assert fc[0]["arguments"] == '{"cmd":"ls"}'
+
+    async def test_custom_tool_call_events(self, monkeypatch):
+        """
+        What it does: a tool_use whose name is in custom_tool_names produces a
+        custom_tool_call item with unwrapped freeform input (not a function_call).
+        Purpose: Codex custom tools (e.g. exec) use custom_tool_call_input.* events
+        and expect raw text in `input`, not JSON arguments.
+        """
+        events = [
+            KiroEvent(type="tool_use", tool_use={
+                "id": "call_x", "type": "function",
+                "function": {"name": "exec", "arguments": '{"input": "print(1)"}'},
+            }),
+        ]
+        parsed = await _run(events, monkeypatch, custom_tool_names={"exec"})
+        types = [t for t, _ in parsed]
+
+        # custom event names, NOT function_call ones
+        assert "response.custom_tool_call_input.delta" in types
+        assert "response.custom_tool_call_input.done" in types
+        assert "response.function_call_arguments.delta" not in types
+
+        # the delta carries the UNWRAPPED raw text
+        delta = [d["delta"] for t, d in parsed if t == "response.custom_tool_call_input.delta"][0]
+        assert delta == "print(1)"
+
+        # completed output has a custom_tool_call item with raw input
+        _, completed = [e for e in parsed if e[0] == "response.completed"][0]
+        ctc = [i for i in completed["response"]["output"] if i["type"] == "custom_tool_call"]
+        assert len(ctc) == 1
+        assert ctc[0]["call_id"] == "call_x"
+        assert ctc[0]["name"] == "exec"
+        assert ctc[0]["input"] == "print(1)"
+
+    async def test_non_custom_tool_still_function_call(self, monkeypatch):
+        """
+        What it does: a tool NOT in custom_tool_names stays a function_call even
+        when custom_tool_names is non-empty.
+        Purpose: only the designated custom tools switch event shape.
+        """
+        events = [
+            KiroEvent(type="tool_use", tool_use={
+                "id": "c1", "type": "function",
+                "function": {"name": "shell", "arguments": '{"cmd":"ls"}'},
+            }),
+        ]
+        parsed = await _run(events, monkeypatch, custom_tool_names={"exec"})
+        types = [t for t, _ in parsed]
+        assert "response.function_call_arguments.done" in types
+        assert "response.custom_tool_call_input.done" not in types
 
     async def test_sequence_numbers_monotonic(self, monkeypatch):
         """

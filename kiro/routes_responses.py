@@ -37,7 +37,8 @@ from kiro.models_responses import ResponsesRequest
 from kiro.converters_responses import (
     build_kiro_payload,
     convert_responses_input_to_unified,
-    convert_responses_tools_to_unified,
+    collect_unified_tools,
+    collect_custom_tool_names,
 )
 from kiro.converters_core import extract_text_content
 from kiro.streaming_responses import (
@@ -73,7 +74,7 @@ def _build_tokenizer_inputs(request_data: ResponsesRequest):
     ]
 
     tools_for_tokenizer = None
-    unified_tools = convert_responses_tools_to_unified(request_data.tools)
+    unified_tools = collect_unified_tools(request_data)
     if unified_tools:
         tools_for_tokenizer = [
             {"name": t.name, "description": t.description or "", "parameters": t.input_schema or {}}
@@ -103,6 +104,10 @@ async def responses(request: Request, request_data: ResponsesRequest):
     logger.info(f"Request to /v1/responses (model={request_data.model}, stream={request_data.stream})")
 
     messages_for_tokenizer, tools_for_tokenizer = _build_tokenizer_inputs(request_data)
+
+    # Names of freeform `custom` tools (e.g. Codex `exec`). Tool calls to these
+    # must be emitted as custom_tool_call items rather than function_call items.
+    custom_tool_names = collect_custom_tool_names(request_data)
 
     # ==============================================================================
     # ACCOUNT SYSTEM ENABLED: Failover Loop
@@ -176,6 +181,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
                             http_client, url, kiro_payload, request_data,
                             model_cache, auth_manager, response,
                             messages_for_tokenizer, tools_for_tokenizer,
+                            custom_tool_names,
                         )
 
                     responses_obj = await collect_responses_response(
@@ -183,6 +189,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
                         model_cache, auth_manager,
                         request_messages=messages_for_tokenizer,
                         request_tools=tools_for_tokenizer,
+                        custom_tool_names=custom_tool_names,
                     )
                     await http_client.close()
                     logger.info("HTTP 200 - POST /v1/responses (non-streaming) - completed")
@@ -327,6 +334,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
                 http_client, url, kiro_payload, request_data,
                 model_cache, auth_manager, response,
                 messages_for_tokenizer, tools_for_tokenizer,
+                custom_tool_names,
             )
 
         responses_obj = await collect_responses_response(
@@ -334,6 +342,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
             model_cache, auth_manager,
             request_messages=messages_for_tokenizer,
             request_tools=tools_for_tokenizer,
+            custom_tool_names=custom_tool_names,
         )
         await http_client.close()
         logger.info("HTTP 200 - POST /v1/responses (non-streaming) - completed")
@@ -362,6 +371,7 @@ def _make_streaming_response(
     http_client, url, kiro_payload, request_data,
     model_cache, auth_manager, initial_response,
     messages_for_tokenizer, tools_for_tokenizer,
+    custom_tool_names=None,
 ) -> StreamingResponse:
     """Build the StreamingResponse wrapper for Responses SSE output."""
 
@@ -381,6 +391,7 @@ def _make_streaming_response(
                 initial_response=initial_response,
                 request_messages=messages_for_tokenizer,
                 request_tools=tools_for_tokenizer,
+                custom_tool_names=custom_tool_names,
             ):
                 yield chunk
         except GeneratorExit:

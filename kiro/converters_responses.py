@@ -146,6 +146,54 @@ def _function_call_output_to_unified(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# Property name used to carry a custom tool's freeform text through the synthesized
+# JSON-schema function (Kiro only accepts JSON-schema functions, not freeform text).
+CUSTOM_TOOL_INPUT_KEY = "input"
+
+
+def _custom_tool_call_to_unified(item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert a Responses custom_tool_call item to a unified tool_call.
+
+    Custom tools carry freeform text in `input` (not JSON arguments). To keep the
+    Kiro conversation history consistent with the synthesized JSON-schema function
+    (see _synthesize_custom_tool), we wrap that text as {"input": "<raw text>"}.
+    """
+    raw_input = item.get("input", "")
+    if not isinstance(raw_input, str):
+        try:
+            raw_input = json.dumps(raw_input, ensure_ascii=False)
+        except (TypeError, ValueError):
+            raw_input = str(raw_input)
+    return {
+        "id": item.get("call_id") or item.get("id") or "",
+        "type": "function",
+        "function": {
+            "name": item.get("name", ""),
+            "arguments": json.dumps({CUSTOM_TOOL_INPUT_KEY: raw_input}, ensure_ascii=False),
+        },
+    }
+
+
+def _custom_tool_call_output_to_unified(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a Responses custom_tool_call_output item to a unified tool_result."""
+    output = item.get("output", "")
+    if isinstance(output, str):
+        content_text = output
+    else:
+        content_text = extract_text_content(_normalize_content_parts(output))
+        if not content_text and output is not None:
+            try:
+                content_text = json.dumps(output, ensure_ascii=False)
+            except (TypeError, ValueError):
+                content_text = str(output)
+    return {
+        "type": "tool_result",
+        "tool_use_id": item.get("call_id") or item.get("id") or "",
+        "content": content_text or "(empty result)",
+    }
+
+
 def convert_responses_input_to_unified(
     request: ResponsesRequest,
 ) -> Tuple[str, List[UnifiedMessage]]:
@@ -211,9 +259,32 @@ def convert_responses_input_to_unified(
             ))
             tool_results_seen += 1
 
+        elif item_type == "custom_tool_call":
+            # Freeform custom tool invocation (e.g. Codex `exec`). Wrapped as a
+            # normal tool_call so Kiro sees consistent history.
+            unified.append(UnifiedMessage(
+                role="assistant",
+                content="",
+                tool_calls=[_custom_tool_call_to_unified(item)],
+            ))
+            tool_calls_seen += 1
+
+        elif item_type == "custom_tool_call_output":
+            unified.append(UnifiedMessage(
+                role="user",
+                content="",
+                tool_results=[_custom_tool_call_output_to_unified(item)],
+            ))
+            tool_results_seen += 1
+
         elif item_type == "reasoning":
             # Ignore server-side reasoning items - Kiro has no encrypted reasoning
             ignored_reasoning += 1
+
+        elif item_type == "additional_tools":
+            # Tool definitions embedded in input (Codex CLI). Collected separately
+            # by collect_unified_tools(); nothing to add to the message list here.
+            continue
 
         else:
             # Unknown item type - try to salvage any text content
@@ -237,17 +308,88 @@ def convert_responses_input_to_unified(
 # Tools
 # ==================================================================================================
 
+def _tool_to_dict(tool: Any) -> Dict[str, Any]:
+    """Normalize a tool (ResponsesTool object or raw dict) to a plain dict."""
+    if isinstance(tool, dict):
+        return tool
+    if hasattr(tool, "model_dump"):
+        return tool.model_dump()
+    return {}
+
+
+def _synthesize_custom_tool(t: Dict[str, Any]) -> Optional[UnifiedTool]:
+    """
+    Synthesize a JSON-schema function for a Responses `custom` tool.
+
+    Custom tools (e.g. Codex `exec`, `apply_patch`) take FREEFORM text input, not
+    JSON arguments. Kiro only accepts JSON-schema functions, so we wrap the
+    freeform text in a single string property (CUSTOM_TOOL_INPUT_KEY). The
+    streaming layer later unwraps this back into a `custom_tool_call` whose
+    `input` is the raw string.
+
+    The original `format` (lark grammar / text) cannot be enforced by Kiro's
+    model, so we surface the tool's description and instruct the model to place
+    the entire freeform payload in the `input` field verbatim.
+
+    Returns:
+        A UnifiedTool, or None if the tool has no name.
+    """
+    name = t.get("name")
+    if not name:
+        logger.warning("Skipping custom Responses tool with no name")
+        return None
+
+    base_desc = t.get("description") or ""
+    fmt = t.get("format") or {}
+    fmt_type = fmt.get("type")
+    grammar_note = ""
+    if fmt_type == "grammar":
+        grammar_note = (
+            f" The payload must follow the tool's {fmt.get('syntax', '')} grammar "
+            f"exactly as described above."
+        )
+
+    description = (
+        f"{base_desc}\n\n"
+        f"[Freeform tool] Put the ENTIRE raw tool payload as plain text in the "
+        f"`{CUSTOM_TOOL_INPUT_KEY}` string field. Do NOT wrap it in JSON, quotes, "
+        f"or markdown fences.{grammar_note}"
+    ).strip()
+
+    return UnifiedTool(
+        name=name,
+        description=description,
+        input_schema={
+            "type": "object",
+            "properties": {
+                CUSTOM_TOOL_INPUT_KEY: {
+                    "type": "string",
+                    "description": "The complete freeform tool payload as plain text.",
+                }
+            },
+            "required": [CUSTOM_TOOL_INPUT_KEY],
+        },
+    )
+
+
 def convert_responses_tools_to_unified(
-    tools: Optional[List[ResponsesTool]],
+    tools: Optional[List[Any]],
 ) -> Optional[List[UnifiedTool]]:
     """
     Convert Responses tools (flat format) to unified tools.
 
-    Only `function` type tools are supported; built-in tool types (web_search,
-    file_search, etc.) are skipped since Kiro only accepts custom functions.
+    Handles the tool shapes Codex CLI sends:
+    - `function`: a standard JSON-schema function -> UnifiedTool
+    - `namespace`: a grouping (e.g. "collaboration") whose `tools` are flattened;
+      the model calls the sub-tools by their bare name, so no prefix is added
+    - `custom`: freeform-text tools (e.g. `exec`, lark grammar) -> synthesized into
+      a JSON-schema function with a single `input` string field, since Kiro only
+      accepts JSON-schema functions. The streaming layer unwraps these back into
+      `custom_tool_call` events (see collect_custom_tool_names).
+    - other built-in types (web_search, file_search, ...) -> skipped
 
     Args:
-        tools: List of ResponsesTool objects
+        tools: List of ResponsesTool objects and/or raw tool dicts
 
     Returns:
         List of UnifiedTool objects, or None if no usable tools
@@ -256,20 +398,122 @@ def convert_responses_tools_to_unified(
         return None
 
     unified_tools: List[UnifiedTool] = []
-    for tool in tools:
-        if tool.type != "function":
-            logger.debug(f"Skipping non-function Responses tool: type={tool.type}")
-            continue
-        if not tool.name:
+    synthesized_custom: List[str] = []
+
+    def _add(tool: Any) -> None:
+        t = _tool_to_dict(tool)
+        ttype = t.get("type", "function")
+
+        if ttype == "namespace":
+            for sub in t.get("tools") or []:
+                _add(sub)
+            return
+
+        if ttype == "custom":
+            synth = _synthesize_custom_tool(t)
+            if synth:
+                unified_tools.append(synth)
+                synthesized_custom.append(synth.name)
+            return
+
+        if ttype != "function":
+            logger.debug(f"Skipping non-function Responses tool: type={ttype}")
+            return
+
+        name = t.get("name")
+        if not name:
             logger.warning("Skipping Responses function tool with no name")
-            continue
+            return
+
         unified_tools.append(UnifiedTool(
-            name=tool.name,
-            description=tool.description,
-            input_schema=tool.parameters,
+            name=name,
+            description=t.get("description"),
+            input_schema=t.get("parameters"),
         ))
 
+    for tool in tools:
+        _add(tool)
+
+    if synthesized_custom:
+        logger.debug(
+            f"Synthesized {len(synthesized_custom)} custom freeform tool(s) as "
+            f"JSON-schema functions: {', '.join(synthesized_custom)}"
+        )
+
     return unified_tools if unified_tools else None
+
+
+def collect_custom_tool_names(request: ResponsesRequest) -> set:
+    """
+    Collect the names of all `custom` (freeform) tools in a Responses request.
+
+    The streaming/collection layer uses this set to decide which tool calls must
+    be emitted as `custom_tool_call` events (freeform `input`) rather than
+    ordinary `function_call` events (JSON `arguments`).
+
+    Walks the same sources as collect_unified_tools: top-level `tools` and any
+    `additional_tools` input items, descending into `namespace` groups.
+
+    Args:
+        request: The parsed Responses request
+
+    Returns:
+        Set of custom tool names (may be empty)
+    """
+    names: set = set()
+
+    def _scan(tool: Any) -> None:
+        t = _tool_to_dict(tool)
+        ttype = t.get("type", "function")
+        if ttype == "namespace":
+            for sub in t.get("tools") or []:
+                _scan(sub)
+        elif ttype == "custom":
+            name = t.get("name")
+            if name:
+                names.add(name)
+
+    if request.tools:
+        for tool in request.tools:
+            _scan(tool)
+
+    if isinstance(request.input, list):
+        for item in request.input:
+            if isinstance(item, dict) and item.get("type") == "additional_tools":
+                for sub in item.get("tools") or []:
+                    _scan(sub)
+
+    return names
+
+
+def collect_unified_tools(request: ResponsesRequest) -> Optional[List[UnifiedTool]]:
+    """
+    Collect tools from every place a Responses request may carry them.
+
+    Codex CLI does not use the top-level `tools` field; instead it embeds an
+    `additional_tools` item (role="developer") as the first element of `input`,
+    whose `tools` list holds the real tool definitions. We gather from both the
+    top-level field and any `additional_tools` items so no tools are lost.
+
+    Args:
+        request: The parsed Responses request
+
+    Returns:
+        List of UnifiedTool objects, or None if no usable tools
+    """
+    raw_tools: List[Any] = []
+
+    if request.tools:
+        raw_tools.extend(request.tools)
+
+    if isinstance(request.input, list):
+        for item in request.input:
+            if isinstance(item, dict) and item.get("type") == "additional_tools":
+                sub = item.get("tools")
+                if isinstance(sub, list):
+                    raw_tools.extend(sub)
+
+    return convert_responses_tools_to_unified(raw_tools)
 
 
 # ==================================================================================================
@@ -338,7 +582,7 @@ def build_kiro_payload(
         ValueError: If there are no messages to send
     """
     system_prompt, unified_messages = convert_responses_input_to_unified(request_data)
-    unified_tools = convert_responses_tools_to_unified(request_data.tools)
+    unified_tools = collect_unified_tools(request_data)
 
     model_id = get_model_id_for_kiro(request_data.model, HIDDEN_MODELS)
     thinking_config = extract_thinking_config_from_responses(request_data)
