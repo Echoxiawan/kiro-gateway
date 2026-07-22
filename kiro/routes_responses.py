@@ -27,6 +27,7 @@ sequence for streaming).
 """
 
 import json
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -68,8 +69,22 @@ def _build_tokenizer_inputs(request_data: ResponsesRequest):
     used when Kiro returns no usage data.
     """
     _, unified_messages = convert_responses_input_to_unified(request_data)
+
+    def _message_text(m) -> str:
+        # Include tool call names/arguments and tool result content so multi-turn
+        # Codex tool conversations aren't undercounted on the fallback path.
+        parts = [extract_text_content(m.content)]
+        for tc in getattr(m, "tool_calls", None) or []:
+            func = tc.get("function") or {}
+            parts.append(func.get("name") or "")
+            parts.append(func.get("arguments") or "")
+        for tr in getattr(m, "tool_results", None) or []:
+            content = tr.get("content")
+            parts.append(content if isinstance(content, str) else extract_text_content(content))
+        return "".join(p for p in parts if p)
+
     messages_for_tokenizer = [
-        {"role": m.role, "content": extract_text_content(m.content)}
+        {"role": m.role, "content": _message_text(m)}
         for m in unified_messages
     ]
 
@@ -85,11 +100,49 @@ def _build_tokenizer_inputs(request_data: ResponsesRequest):
 
 
 def _error_response(status_code: int, message: str) -> JSONResponse:
-    """Build a Responses-style error JSON response."""
+    """
+    Build a Responses-style error JSON response.
+
+    The HTTP status is carried by the response status code; the OpenAI-style
+    `error.code` field is a string identifier or null (never the HTTP integer),
+    so strict-typed clients parse it correctly.
+    """
     return JSONResponse(
         status_code=status_code,
-        content={"error": {"message": message, "type": "kiro_api_error", "code": status_code}},
+        content={"error": {"message": message, "type": "kiro_api_error", "code": None}},
     )
+
+
+def _unsupported_tool_choice_error(tool_choice) -> Optional[str]:
+    """
+    Return an error message if tool_choice imposes a hard forcing semantic the
+    Kiro backend cannot honor, else None.
+
+    Kiro cannot guarantee forced tool selection. Rather than silently ignoring a
+    hard requirement (which yields confusing "model refused to call the required
+    tool" behavior), we reject it up front. Soft values pass through:
+    - `auto` / None: default best-effort -> allowed
+    - `none`: a soft "prefer no tools" preference -> allowed (worst case is an
+      occasional spurious tool call, far less severe than an unmet requirement,
+      and rejecting risks breaking legitimate no-tool turns)
+    - `required` / a specific {"type","name"} tool: hard forcing -> rejected
+    """
+    if tool_choice is None:
+        return None
+    if isinstance(tool_choice, str):
+        if tool_choice in ("auto", "none"):
+            return None
+        return (
+            f"tool_choice={tool_choice!r} is not supported: the Kiro backend cannot "
+            f"guarantee forced tool selection. Use 'auto'."
+        )
+    if isinstance(tool_choice, dict):
+        forced = tool_choice.get("name") or tool_choice.get("type")
+        return (
+            f"Forcing a specific tool via tool_choice ({forced!r}) is not supported: "
+            f"the Kiro backend cannot guarantee it. Use 'auto'."
+        )
+    return None
 
 
 @router.post("/v1/responses", dependencies=[Depends(verify_api_key)])
@@ -104,6 +157,15 @@ async def responses(request: Request, request_data: ResponsesRequest):
     logger.info(f"Request to /v1/responses (model={request_data.model}, stream={request_data.stream})")
 
     messages_for_tokenizer, tools_for_tokenizer = _build_tokenizer_inputs(request_data)
+
+    # Reject hard tool_choice forcing semantics the Kiro backend cannot honor,
+    # rather than silently ignoring them and producing confusing behavior.
+    tool_choice_error = _unsupported_tool_choice_error(request_data.tool_choice)
+    if tool_choice_error:
+        logger.warning(f"HTTP 400 - POST /v1/responses - {tool_choice_error}")
+        if debug_logger:
+            debug_logger.flush_on_error(400, tool_choice_error)
+        return _error_response(400, tool_choice_error)
 
     # Names of freeform `custom` tools (e.g. Codex `exec`). Tool calls to these
     # must be emitted as custom_tool_call items rather than function_call items.

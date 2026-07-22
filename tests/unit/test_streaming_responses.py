@@ -204,6 +204,89 @@ class TestResponsesStreaming:
         assert "response.function_call_arguments.done" in types
         assert "response.custom_tool_call_input.done" not in types
 
+    async def test_pure_tool_call_starts_with_created(self, monkeypatch):
+        """
+        What it does: a tool call with NO preceding text/reasoning still emits
+        response.created before any output item events.
+        Purpose: Codex's state machine requires response.created first; otherwise
+        it may ignore the tool call or hang. Regression guard for the ordering bug.
+        """
+        events = [
+            KiroEvent(type="tool_use", tool_use={
+                "id": "c1", "type": "function",
+                "function": {"name": "shell", "arguments": '{"cmd":"ls"}'},
+            }),
+        ]
+        parsed = await _run(events, monkeypatch)
+        types = [t for t, _ in parsed]
+        assert types[0] == "response.created"
+        assert types.index("response.created") < types.index("response.output_item.added")
+        assert types[-1] == "response.completed"
+
+    async def test_pure_custom_tool_call_starts_with_created(self, monkeypatch):
+        """Same ordering guarantee for a pure custom_tool_call (e.g. exec)."""
+        events = [
+            KiroEvent(type="tool_use", tool_use={
+                "id": "cx", "type": "function",
+                "function": {"name": "exec", "arguments": '{"input": "x"}'},
+            }),
+        ]
+        parsed = await _run(events, monkeypatch, custom_tool_names={"exec"})
+        types = [t for t, _ in parsed]
+        assert types[0] == "response.created"
+        assert types.index("response.created") < types.index("response.output_item.added")
+
+    async def test_tool_call_counts_output_tokens(self, monkeypatch):
+        """
+        What it does: a pure tool-call response reports output_tokens > 0.
+        Purpose: tool name + arguments must count toward output tokens; a pure
+        tool call must not report output_tokens=0.
+        """
+        events = [
+            KiroEvent(type="tool_use", tool_use={
+                "id": "c1", "type": "function",
+                "function": {"name": "shell", "arguments": '{"cmd":"ls -la /tmp"}'},
+            }),
+            KiroEvent(type="context_usage", context_usage_percentage=1.0),
+        ]
+        parsed = await _run(events, monkeypatch)
+        _, completed = [e for e in parsed if e[0] == "response.completed"][0]
+        assert completed["response"]["usage"]["output_tokens"] > 0
+
+    async def test_mid_stream_error_emits_response_failed(self, monkeypatch):
+        """
+        What it does: an upstream error after SSE has started emits a terminal
+        response.failed event instead of dropping the connection.
+        Purpose: once HTTP 200 is sent, failure can only be signalled in-band;
+        Codex should get a clean terminal event, not an EOF/reset.
+        """
+        async def failing_parse(response, first_token_timeout, *a, **kw):
+            yield KiroEvent(type="content", content="partial")
+            raise RuntimeError("upstream exploded")
+
+        monkeypatch.setattr(streaming_responses, "parse_kiro_stream", failing_parse)
+
+        class _Cache:
+            def get_max_input_tokens(self, model):
+                return 200000
+
+        chunks = []
+        async for chunk in streaming_responses.stream_kiro_to_responses_internal(
+            client=None, response=_FakeResponse(), model="claude-sonnet-4.5",
+            model_cache=_Cache(), auth_manager=None,
+        ):
+            chunks.append(chunk)
+        parsed = _parse_sse(chunks)
+        types = [t for t, _ in parsed]
+
+        # created was emitted, and the stream ends with a failed terminal event
+        assert "response.created" in types
+        assert types[-1] == "response.failed"
+        _, failed = parsed[-1]
+        assert failed["response"]["status"] == "failed"
+        assert "upstream exploded" in failed["response"]["error"]["message"]
+        assert failed["response"]["error"]["code"] is None
+
     async def test_sequence_numbers_monotonic(self, monkeypatch):
         """
         What it does: every event carries a strictly increasing sequence_number.

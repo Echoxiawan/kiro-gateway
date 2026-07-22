@@ -463,3 +463,64 @@ class TestBuildKiroPayload:
         body = json.dumps(payload)
         assert "shell" in body
         assert "toolResults" in body or "toolUses" in body
+
+
+# ==================================================================================================
+# routes_responses helpers (#3 tool_choice, #5 fallback tokens, #6 error code)
+# ==================================================================================================
+
+class TestRouteHelpers:
+    def test_error_response_code_is_null_not_http_int(self):
+        """
+        What it does: _error_response emits error.code = null (not the HTTP int).
+        Purpose: OpenAI-style errors use string/null codes; HTTP status carries
+        the numeric status. Strict-typed clients would mis-parse an int code.
+        """
+        import json as _json
+        from kiro.routes_responses import _error_response
+        resp = _error_response(400, "bad request")
+        body = _json.loads(bytes(resp.body))
+        assert resp.status_code == 400
+        assert body["error"]["code"] is None
+        assert body["error"]["message"] == "bad request"
+
+    def test_tool_choice_auto_and_none_allowed(self):
+        """auto / none / unset impose no hard forcing -> allowed (returns None)."""
+        from kiro.routes_responses import _unsupported_tool_choice_error
+        assert _unsupported_tool_choice_error(None) is None
+        assert _unsupported_tool_choice_error("auto") is None
+        assert _unsupported_tool_choice_error("none") is None
+
+    def test_tool_choice_required_rejected(self):
+        """`required` forces a tool call Kiro cannot guarantee -> rejected."""
+        from kiro.routes_responses import _unsupported_tool_choice_error
+        msg = _unsupported_tool_choice_error("required")
+        assert msg is not None and "not supported" in msg
+
+    def test_tool_choice_specific_tool_rejected(self):
+        """Forcing a named tool -> rejected."""
+        from kiro.routes_responses import _unsupported_tool_choice_error
+        msg = _unsupported_tool_choice_error({"type": "function", "name": "shell"})
+        assert msg is not None
+        assert "shell" in msg
+
+    def test_fallback_tokenizer_includes_tool_history(self):
+        """
+        What it does: _build_tokenizer_inputs folds tool_calls/tool_results text
+        into the per-message content used for fallback token counting.
+        Purpose: multi-turn Codex tool conversations must not be undercounted when
+        upstream context usage is missing.
+        """
+        from kiro.routes_responses import _build_tokenizer_inputs
+        req = ResponsesRequest(model="m", input=[
+            {"type": "function_call", "call_id": "c1", "name": "shell",
+             "arguments": '{"cmd":"ls -la /var/log"}'},
+            {"type": "function_call_output", "call_id": "c1",
+             "output": "total 42 drwxr-xr-x syslog"},
+        ])
+        messages, _tools = _build_tokenizer_inputs(req)
+        blob = "".join(m["content"] for m in messages)
+        # tool name, arguments, and result content all present in counted text
+        assert "shell" in blob
+        assert "ls -la /var/log" in blob
+        assert "syslog" in blob

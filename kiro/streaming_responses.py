@@ -303,6 +303,8 @@ class _ResponsesStreamState:
 
     def add_function_call(self, call_id: str, name: str, arguments: str) -> AsyncGenerator[str, None]:
         async def gen():
+            async for c in self.ensure_created():
+                yield c
             async for c in self._close_current():
                 yield c
             item_id = _new_item_id("fc")
@@ -334,6 +336,8 @@ class _ResponsesStreamState:
         `arguments`), and use the `response.custom_tool_call_input.*` event names.
         """
         async def gen():
+            async for c in self.ensure_created():
+                yield c
             async for c in self._close_current():
                 yield c
             item_id = _new_item_id("ctc")
@@ -364,6 +368,26 @@ class _ResponsesStreamState:
             async for c in self._close_current():
                 yield c
             yield self._sse("response.completed", {"response": self._response_skeleton(status, usage)})
+        return gen()
+
+    def fail(self, message: str, error_type: str = "server_error") -> AsyncGenerator[str, None]:
+        """
+        Emit a protocol-level terminal `response.failed` event.
+
+        Once SSE has started the HTTP status is already 200, so an upstream error
+        cannot be signalled via HTTP. Codex would otherwise see a bare connection
+        drop (EOF/reset). This mints created/in_progress if not yet sent, closes
+        any open item, and emits `response.failed` carrying an error object so the
+        client has a clean terminal signal.
+        """
+        async def gen():
+            async for c in self.ensure_created():
+                yield c
+            async for c in self._close_current():
+                yield c
+            resp = self._response_skeleton("failed")
+            resp["error"] = {"code": None, "message": message, "type": error_type}
+            yield self._sse("response.failed", {"response": resp})
         return gen()
 
 
@@ -427,6 +451,7 @@ async def stream_kiro_to_responses_internal(
         # Emit tool call items (each is a self-contained item). Freeform `custom`
         # tools become custom_tool_call items with unwrapped raw-text input; all
         # others become ordinary function_call items.
+        tool_output_text = ""  # accumulate tool name + payload for token accounting
         for tc in all_tool_calls:
             func = tc.get("function") or {}
             name = func.get("name") or tc.get("name") or ""
@@ -438,14 +463,18 @@ async def stream_kiro_to_responses_internal(
                 arguments = json.dumps(arguments, ensure_ascii=False)
             if name in custom_tool_names:
                 tool_input = _unwrap_custom_tool_input(arguments or "{}")
+                tool_output_text += name + tool_input
                 async for c in state.add_custom_tool_call(tc.get("id", ""), name, tool_input):
                     yield c
             else:
+                tool_output_text += name + (arguments or "{}")
                 async for c in state.add_function_call(tc.get("id", ""), name, arguments or "{}"):
                     yield c
 
-        # Token accounting (same approach as the OpenAI path)
-        completion_tokens = count_tokens(full_content + full_thinking)
+        # Token accounting (same approach as the OpenAI path). Tool call names and
+        # their generated arguments/input count toward output tokens too, otherwise
+        # a pure tool-call response would report output_tokens=0.
+        completion_tokens = count_tokens(full_content + full_thinking + tool_output_text)
         prompt_tokens, total_tokens, prompt_source, total_source = calculate_tokens_from_context_usage(
             context_usage_percentage, completion_tokens, model_cache, model
         )
@@ -470,6 +499,8 @@ async def stream_kiro_to_responses_internal(
             yield c
 
     except FirstTokenTimeoutError:
+        # Propagate so the retry wrapper can start a fresh attempt. No events have
+        # been emitted yet (parse_kiro_stream raises before the first yield).
         raise
     except GeneratorExit:
         logger.debug("Client disconnected (GeneratorExit)")
@@ -479,7 +510,14 @@ async def stream_kiro_to_responses_internal(
         error_type = type(e).__name__
         error_msg = str(e) if str(e) else "(empty message)"
         logger.error(f"Error during Responses streaming: [{error_type}] {error_msg}", exc_info=True)
-        raise
+        # SSE has already started (HTTP 200), so we cannot signal failure via HTTP.
+        # Emit a protocol-level response.failed terminal event instead of letting
+        # the connection drop, then end the stream gracefully (no re-raise).
+        try:
+            async for c in state.fail(error_msg or "Internal error during streaming"):
+                yield c
+        except Exception:
+            pass
     finally:
         try:
             await response.aclose()
@@ -599,6 +637,7 @@ async def collect_responses_response(
             "content": [{"type": "output_text", "text": result.content, "annotations": []}],
         })
 
+    tool_output_text = ""  # accumulate tool name + payload for token accounting
     for tc in result.tool_calls:
         func = tc.get("function") or {}
         name = func.get("name") or tc.get("name") or ""
@@ -609,15 +648,18 @@ async def collect_responses_response(
         if not isinstance(arguments, str):
             arguments = json.dumps(arguments, ensure_ascii=False)
         if name in custom_tool_names:
+            tool_input = _unwrap_custom_tool_input(arguments or "{}")
+            tool_output_text += name + tool_input
             output_items.append({
                 "id": _new_item_id("ctc"),
                 "type": "custom_tool_call",
                 "status": "completed",
                 "call_id": tc.get("id") or _new_item_id("call"),
                 "name": name,
-                "input": _unwrap_custom_tool_input(arguments or "{}"),
+                "input": tool_input,
             })
         else:
+            tool_output_text += name + (arguments or "{}")
             output_items.append({
                 "id": _new_item_id("fc"),
                 "type": "function_call",
@@ -627,7 +669,9 @@ async def collect_responses_response(
                 "arguments": arguments or "{}",
             })
 
-    completion_tokens = count_tokens(result.content + result.thinking_content)
+    # Tool call names + generated payloads count toward output tokens too, else a
+    # pure tool-call response would report output_tokens=0.
+    completion_tokens = count_tokens(result.content + result.thinking_content + tool_output_text)
     prompt_tokens, total_tokens, prompt_source, _ = calculate_tokens_from_context_usage(
         result.context_usage_percentage, completion_tokens, model_cache, model
     )
