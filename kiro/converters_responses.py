@@ -501,6 +501,10 @@ def collect_unified_tools(request: ResponsesRequest) -> Optional[List[UnifiedToo
     Returns:
         List of UnifiedTool objects, or None if no usable tools
     """
+    if request.tool_choice == "none":
+        logger.debug("Responses tool_choice='none': omitting tools from Kiro payload")
+        return None
+
     raw_tools: List[Any] = []
 
     if request.tools:

@@ -120,11 +120,9 @@ def _unsupported_tool_choice_error(tool_choice) -> Optional[str]:
 
     Kiro cannot guarantee forced tool selection. Rather than silently ignoring a
     hard requirement (which yields confusing "model refused to call the required
-    tool" behavior), we reject it up front. Soft values pass through:
+    tool" behavior), we reject it up front. Supported values pass through:
     - `auto` / None: default best-effort -> allowed
-    - `none`: a soft "prefer no tools" preference -> allowed (worst case is an
-      occasional spurious tool call, far less severe than an unmet requirement,
-      and rejecting risks breaking legitimate no-tool turns)
+    - `none`: tools are omitted from the Kiro payload by collect_unified_tools()
     - `required` / a specific {"type","name"} tool: hard forcing -> rejected
     """
     if tool_choice is None:
@@ -143,6 +141,38 @@ def _unsupported_tool_choice_error(tool_choice) -> Optional[str]:
             f"the Kiro backend cannot guarantee it. Use 'auto'."
         )
     return None
+
+
+def _unsupported_generation_parameter_error(request_data: ResponsesRequest) -> Optional[str]:
+    """Return an actionable error for generation controls Kiro cannot honor.
+
+    Accepting these values and silently discarding them violates the Responses
+    contract. The Kiro endpoint does not expose equivalent sampling or output-cap
+    controls, so explicit rejection is safer than pretending they took effect.
+
+    Args:
+        request_data: Parsed Responses request.
+
+    Returns:
+        Error message when an unsupported control was supplied, otherwise None.
+    """
+    unsupported = []
+    if request_data.temperature is not None:
+        unsupported.append("temperature")
+    if request_data.top_p is not None:
+        unsupported.append("top_p")
+    if request_data.max_output_tokens is not None:
+        unsupported.append("max_output_tokens")
+
+    if not unsupported:
+        return None
+
+    names = ", ".join(unsupported)
+    return (
+        f"Unsupported Responses generation parameter(s): {names}. "
+        "The Kiro backend does not expose equivalent controls; remove these "
+        "parameters and retry."
+    )
 
 
 @router.post("/v1/responses", dependencies=[Depends(verify_api_key)])
@@ -166,6 +196,13 @@ async def responses(request: Request, request_data: ResponsesRequest):
         if debug_logger:
             debug_logger.flush_on_error(400, tool_choice_error)
         return _error_response(400, tool_choice_error)
+
+    generation_parameter_error = _unsupported_generation_parameter_error(request_data)
+    if generation_parameter_error:
+        logger.warning(f"HTTP 400 - POST /v1/responses - {generation_parameter_error}")
+        if debug_logger:
+            debug_logger.flush_on_error(400, generation_parameter_error)
+        return _error_response(400, generation_parameter_error)
 
     # Names of freeform `custom` tools (e.g. Codex `exec`). Tool calls to these
     # must be emitted as custom_tool_call items rather than function_call items.
@@ -243,7 +280,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
                             http_client, url, kiro_payload, request_data,
                             model_cache, auth_manager, response,
                             messages_for_tokenizer, tools_for_tokenizer,
-                            custom_tool_names,
+                            custom_tool_names, request_data.parallel_tool_calls,
                         )
 
                     responses_obj = await collect_responses_response(
@@ -252,6 +289,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
                         request_messages=messages_for_tokenizer,
                         request_tools=tools_for_tokenizer,
                         custom_tool_names=custom_tool_names,
+                        parallel_tool_calls=request_data.parallel_tool_calls,
                     )
                     await http_client.close()
                     logger.info("HTTP 200 - POST /v1/responses (non-streaming) - completed")
@@ -396,7 +434,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
                 http_client, url, kiro_payload, request_data,
                 model_cache, auth_manager, response,
                 messages_for_tokenizer, tools_for_tokenizer,
-                custom_tool_names,
+                custom_tool_names, request_data.parallel_tool_calls,
             )
 
         responses_obj = await collect_responses_response(
@@ -405,6 +443,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
             request_messages=messages_for_tokenizer,
             request_tools=tools_for_tokenizer,
             custom_tool_names=custom_tool_names,
+            parallel_tool_calls=request_data.parallel_tool_calls,
         )
         await http_client.close()
         logger.info("HTTP 200 - POST /v1/responses (non-streaming) - completed")
@@ -434,6 +473,7 @@ def _make_streaming_response(
     model_cache, auth_manager, initial_response,
     messages_for_tokenizer, tools_for_tokenizer,
     custom_tool_names=None,
+    parallel_tool_calls=None,
 ) -> StreamingResponse:
     """Build the StreamingResponse wrapper for Responses SSE output."""
 
@@ -454,6 +494,7 @@ def _make_streaming_response(
                 request_messages=messages_for_tokenizer,
                 request_tools=tools_for_tokenizer,
                 custom_tool_names=custom_tool_names,
+                parallel_tool_calls=parallel_tool_calls,
             ):
                 yield chunk
         except GeneratorExit:

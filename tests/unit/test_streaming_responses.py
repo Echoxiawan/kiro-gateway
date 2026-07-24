@@ -8,6 +8,7 @@ event stream through the internal generator and parsing the emitted events.
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,8 @@ from kiro import streaming_responses
 
 class _FakeResponse:
     """Minimal stand-in for httpx.Response.aclose()."""
+    status_code = 200
+
     async def aclose(self):
         return None
 
@@ -38,7 +41,13 @@ def _parse_sse(chunks):
     return events
 
 
-async def _run(events, monkeypatch, model="claude-sonnet-4.5", custom_tool_names=None):
+async def _run(
+    events,
+    monkeypatch,
+    model="claude-sonnet-4.5",
+    custom_tool_names=None,
+    parallel_tool_calls=None,
+):
     """Drive the internal generator with a fake parse_kiro_stream."""
     async def fake_parse_kiro_stream(response, first_token_timeout, *a, **kw):
         for e in events:
@@ -55,6 +64,7 @@ async def _run(events, monkeypatch, model="claude-sonnet-4.5", custom_tool_names
         client=None, response=_FakeResponse(), model=model,
         model_cache=_Cache(), auth_manager=None,
         custom_tool_names=custom_tool_names,
+        parallel_tool_calls=parallel_tool_calls,
     ):
         chunks.append(chunk)
     return _parse_sse(chunks)
@@ -286,6 +296,156 @@ class TestResponsesStreaming:
         assert failed["response"]["status"] == "failed"
         assert "upstream exploded" in failed["response"]["error"]["message"]
         assert failed["response"]["error"]["code"] is None
+
+    async def test_mid_stream_error_does_not_complete_partial_item(self, monkeypatch):
+        """
+        What it does: a failed partial message is abandoned without done events.
+        Purpose: truncated output must not be advertised as a completed item.
+        """
+        async def failing_parse(response, first_token_timeout, *args, **kwargs):
+            yield KiroEvent(type="content", content="partial")
+            raise RuntimeError("upstream exploded")
+
+        monkeypatch.setattr(streaming_responses, "parse_kiro_stream", failing_parse)
+
+        class _Cache:
+            def get_max_input_tokens(self, model):
+                return 200000
+
+        chunks = []
+        async for chunk in streaming_responses.stream_kiro_to_responses_internal(
+            client=None, response=_FakeResponse(), model="m",
+            model_cache=_Cache(), auth_manager=None,
+        ):
+            chunks.append(chunk)
+
+        types = [event_type for event_type, _ in _parse_sse(chunks)]
+        assert "response.output_text.done" not in types
+        assert "response.content_part.done" not in types
+        assert "response.output_item.done" not in types
+        assert types[-1] == "response.failed"
+
+    async def test_parallel_tool_calls_false_returns_one_call(self, monkeypatch):
+        """
+        What it does: two generated calls become one when parallel calls are disabled.
+        Purpose: Codex sends parallel_tool_calls=false and must not receive a
+        parallel batch it explicitly prohibited.
+        """
+        events = [
+            KiroEvent(type="tool_use", tool_use={
+                "id": "c1", "type": "function",
+                "function": {"name": "first", "arguments": "{}"},
+            }),
+            KiroEvent(type="tool_use", tool_use={
+                "id": "c2", "type": "function",
+                "function": {"name": "second", "arguments": "{}"},
+            }),
+        ]
+
+        parsed = await _run(
+            events, monkeypatch, parallel_tool_calls=False,
+        )
+        completed = next(data for event_type, data in parsed if event_type == "response.completed")
+        calls = [item for item in completed["response"]["output"] if item["type"] == "function_call"]
+
+        assert len(calls) == 1
+        assert calls[0]["name"] == "first"
+
+    async def test_non_streaming_parallel_tool_calls_false_returns_one_call(
+        self, monkeypatch
+    ):
+        """Non-streaming responses enforce the same serial tool-call policy."""
+        result = SimpleNamespace(
+            thinking_content="",
+            content="",
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "function": {"name": "first", "arguments": "{}"},
+                },
+                {
+                    "id": "c2",
+                    "function": {"name": "second", "arguments": "{}"},
+                },
+            ],
+            context_usage_percentage=None,
+        )
+
+        async def fake_collect_stream_to_result(response):
+            return result
+
+        monkeypatch.setattr(
+            "kiro.streaming_core.collect_stream_to_result",
+            fake_collect_stream_to_result,
+        )
+
+        response = await streaming_responses.collect_responses_response(
+            client=None, response=_FakeResponse(), model="m",
+            model_cache=None, auth_manager=None, parallel_tool_calls=False,
+        )
+        calls = [item for item in response["output"] if item["type"] == "function_call"]
+
+        assert len(calls) == 1
+        assert calls[0]["name"] == "first"
+
+    async def test_retry_exhaustion_emits_failed_sequence(self, monkeypatch):
+        """
+        What it does: exhausted first-token retries end with response.failed.
+        Purpose: StreamingResponse headers are already 200, so raising an HTTP
+        exception would only produce an unexplained EOF for Codex.
+        """
+        async def failing_retry_core(**kwargs):
+            if False:
+                yield ""
+            raise kwargs["on_all_retries_failed"](2, 0.01)
+
+        monkeypatch.setattr(
+            streaming_responses,
+            "stream_with_first_token_retry_core",
+            failing_retry_core,
+        )
+
+        async def make_request():
+            return _FakeResponse()
+
+        chunks = []
+        async for chunk in streaming_responses.stream_responses_with_first_token_retry(
+            make_request=make_request, client=None, model="m",
+            model_cache=None, auth_manager=None, max_retries=2,
+            first_token_timeout=0.01,
+        ):
+            chunks.append(chunk)
+
+        parsed = _parse_sse(chunks)
+        types = [event_type for event_type, _ in parsed]
+        assert types == ["response.created", "response.in_progress", "response.failed"]
+        assert parsed[-1][1]["response"]["status"] == "failed"
+        assert "2 attempts" in parsed[-1][1]["response"]["error"]["message"]
+
+    async def test_retry_http_error_emits_failed_sequence(self):
+        """A non-200 retry response is converted to an in-band failure."""
+        class _ErrorResponse(_FakeResponse):
+            status_code = 503
+
+            async def aread(self):
+                return b"temporarily unavailable"
+
+        async def make_request():
+            return _ErrorResponse()
+
+        chunks = []
+        async for chunk in streaming_responses.stream_responses_with_first_token_retry(
+            make_request=make_request, client=None, model="m",
+            model_cache=None, auth_manager=None, initial_response=None,
+            max_retries=1, first_token_timeout=0.01,
+        ):
+            chunks.append(chunk)
+
+        parsed = _parse_sse(chunks)
+        types = [event_type for event_type, _ in parsed]
+        assert types == ["response.created", "response.in_progress", "response.failed"]
+        assert "503" not in parsed[-1][1]["response"]["error"]["message"]
+        assert "temporarily unavailable" in parsed[-1][1]["response"]["error"]["message"]
 
     async def test_sequence_numbers_monotonic(self, monkeypatch):
         """

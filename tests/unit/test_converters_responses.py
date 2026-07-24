@@ -464,6 +464,29 @@ class TestBuildKiroPayload:
         assert "shell" in body
         assert "toolResults" in body or "toolUses" in body
 
+    def test_tool_choice_none_omits_tools_from_payload(self):
+        """
+        What it does: tool_choice=none removes declared tools from the Kiro request.
+        Purpose: Responses `none` prohibits new tool calls; merely accepting the
+        field while still advertising tools would violate that contract.
+        """
+        req = ResponsesRequest(
+            model="m",
+            input="Answer directly",
+            tool_choice="none",
+            tools=[ResponsesTool(
+                type="function",
+                name="shell",
+                parameters={"type": "object"},
+            )],
+        )
+
+        payload = build_kiro_payload(req, "conv-1", "arn:test")
+        current = payload["conversationState"]["currentMessage"]["userInputMessage"]
+
+        assert "userInputMessageContext" not in current
+        assert "shell" not in json.dumps(payload)
+
 
 # ==================================================================================================
 # routes_responses helpers (#3 tool_choice, #5 fallback tokens, #6 error code)
@@ -485,7 +508,7 @@ class TestRouteHelpers:
         assert body["error"]["message"] == "bad request"
 
     def test_tool_choice_auto_and_none_allowed(self):
-        """auto / none / unset impose no hard forcing -> allowed (returns None)."""
+        """auto / none / unset are implemented and therefore accepted."""
         from kiro.routes_responses import _unsupported_tool_choice_error
         assert _unsupported_tool_choice_error(None) is None
         assert _unsupported_tool_choice_error("auto") is None
@@ -503,6 +526,44 @@ class TestRouteHelpers:
         msg = _unsupported_tool_choice_error({"type": "function", "name": "shell"})
         assert msg is not None
         assert "shell" in msg
+
+    @pytest.mark.parametrize("field,value", [
+        ("temperature", 0.5),
+        ("top_p", 0.9),
+        ("max_output_tokens", 1024),
+    ])
+    def test_unsupported_generation_parameters_are_rejected(self, field, value):
+        """
+        What it does: generation controls without Kiro equivalents return errors.
+        Purpose: accepted parameters must not be silently discarded.
+        """
+        from kiro.routes_responses import _unsupported_generation_parameter_error
+        req = ResponsesRequest(model="m", input="hello", **{field: value})
+
+        message = _unsupported_generation_parameter_error(req)
+
+        assert message is not None
+        assert field in message
+
+    def test_default_generation_parameters_are_allowed(self):
+        """Absent optional generation controls require no rejection."""
+        from kiro.routes_responses import _unsupported_generation_parameter_error
+        req = ResponsesRequest(model="m", input="hello")
+        assert _unsupported_generation_parameter_error(req) is None
+
+    def test_tool_choice_none_omits_tools_from_tokenizer_input(self):
+        """Fallback token counting matches the actual no-tools Kiro payload."""
+        from kiro.routes_responses import _build_tokenizer_inputs
+        req = ResponsesRequest(
+            model="m",
+            input="hello",
+            tool_choice="none",
+            tools=[ResponsesTool(type="function", name="shell")],
+        )
+
+        _messages, tools = _build_tokenizer_inputs(req)
+
+        assert tools is None
 
     def test_fallback_tokenizer_includes_tool_history(self):
         """
