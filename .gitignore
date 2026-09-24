@@ -3,6 +3,7 @@
 .env.local
 credentials.json
 state.json
+api_keys.json
 
 # IDE
 .vscode/
@@ -27,7 +28,12 @@ debug*.json
 _notes/
 requests/
 
+# Claude Code & tooling
+.claude/
+.playwright-mcp/
+
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
+/codex-debug_logs/

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -110,6 +111,55 @@ class ToolResultContentBlock(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class ServerToolUseContentBlock(BaseModel):
+    """
+    Server-side tool use content block (Anthropic server tools).
+
+    Sent by Claude Code in conversation history when a server-side tool
+    (e.g. web_search) is invoked. Unlike client tool_use blocks, these are
+    executed by Anthropic's servers, so the gateway does not act on them -
+    they only need to validate so the request is accepted.
+    """
+
+    type: Literal["server_tool_use"] = "server_tool_use"
+    id: str
+    name: str
+    input: Dict[str, Any]
+
+    model_config = {"extra": "allow"}
+
+
+class WebSearchToolResultContentBlock(BaseModel):
+    """
+    Web search tool result content block (Anthropic server tools).
+
+    Carries the results of a server-side web_search call. The search content
+    is also mirrored as a plain text block by Claude Code, so the gateway can
+    safely ignore this block while still preserving the information.
+    """
+
+    type: Literal["web_search_tool_result"] = "web_search_tool_result"
+    tool_use_id: str
+    content: Any = None
+
+    model_config = {"extra": "allow"}
+
+
+class UnknownContentBlock(BaseModel):
+    """
+    Fallback content block for unrecognized types.
+
+    Forward-compatibility catch-all so new server-side tool blocks (e.g.
+    code_execution) do not trigger 422 validation errors. The converters
+    match blocks by their ``type`` field and ignore anything they do not
+    understand, so accepting unknown blocks here is safe.
+    """
+
+    type: str
+
+    model_config = {"extra": "allow"}
+
+
 # ==================================================================================================
 # Image Content Block Models
 # ==================================================================================================
@@ -163,6 +213,8 @@ class ImageContentBlock(BaseModel):
 
 
 # Union type for all content blocks (including images and thinking)
+# UnknownContentBlock must stay last: its permissive ``type: str`` matches any
+# block, so the specific Literal-typed blocks above take precedence.
 ContentBlock = Union[
     TextContentBlock,
     ThinkingContentBlock,
@@ -170,6 +222,9 @@ ContentBlock = Union[
     ToolUseContentBlock,
     ToolResultContentBlock,
     ToolReferenceContentBlock,
+    ServerToolUseContentBlock,
+    WebSearchToolResultContentBlock,
+    UnknownContentBlock,
 ]
 
 
@@ -183,11 +238,11 @@ class AnthropicMessage(BaseModel):
     Message in Anthropic format.
 
     Attributes:
-        role: Message role (user or assistant)
+        role: Message role (user, assistant, or system)
         content: Message content (string or list of content blocks)
     """
 
-    role: Literal["user", "assistant"]
+    role: str
     content: Union[str, List[ContentBlock]]
 
     model_config = {"extra": "allow"}

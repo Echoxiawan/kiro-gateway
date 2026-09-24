@@ -6,16 +6,15 @@
 
 [🇬🇧 English](../../README.md) • [🇷🇺 Русский](../ru/README.md) • [🇨🇳 中文](../zh/README.md) • [🇪🇸 Español](../es/README.md) • [🇮🇩 Indonesia](../id/README.md) • [🇧🇷 Português](../pt/README.md) • [🇯🇵 日本語](../ja/README.md) • 🇰🇷 한국어
 
-[@Jwadow](https://github.com/jwadow)가 ❤️를 담아 제작
+원작자 [@Jwadow](https://github.com/jwadow) • 유지관리 [@Echoxiawan](https://github.com/Echoxiawan)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-개발_지원-ff69b4)](#-프로젝트-후원)
 
 *Kiro의 Claude 모델을 Claude Code, OpenCode, OpenClaw, Claw Code, Codex app, Cursor, Cline, Roo Code, Kilo Code, Obsidian, OpenAI SDK, LangChain, Continue 및 기타 OpenAI 또는 Anthropic 호환 도구와 함께 사용*
 
-[모델](#-지원-모델) • [기능](#-기능) • [빠른-시작](#-빠른-시작) • [설정](#%EF%B8%8F-설정) • [💖 후원](#-프로젝트-후원)
+[모델](#-지원-모델) • [기능](#-기능) • [빠른-시작](#-빠른-시작) • [설정](#%EF%B8%8F-설정)
 
 </div>
 
@@ -53,6 +52,7 @@
 |------|------|
 | 🔌 **OpenAI 호환 API** | OpenAI 호환 도구와 함께 작동 |
 | 🔌 **Anthropic 호환 API** | 네이티브 `/v1/messages` 엔드포인트 |
+| 🔌 **OpenAI Responses API** | OpenAI Codex CLI를 위한 네이티브 `/v1/responses` 엔드포인트 |
 | 🔀 **다중 계정 지원** | 여러 계정 간의 지능형 페일오버 |
 | 🌐 **VPN/프록시 지원** | 제한된 네트워크용 HTTP/SOCKS5 프록시 |
 | 🧠 **확장 사고** | 추론 기능은 우리 프로젝트만의 독점 기능 |
@@ -64,6 +64,16 @@
 | 🔄 **재시도 로직** | 오류 시 자동 재시도 (403, 429, 5xx) |
 | 📋 **확장 모델 목록** | 버전 모델 포함 |
 | 🔐 **스마트 토큰 관리** | 만료 전 자동 갱신 |
+
+---
+
+## 🆕 이 포크의 새로운 기능
+
+> 이것은 상위(upstream) 프로젝트에 추가 수정 사항과 기능을 더해 유지 관리되는 포크입니다.
+
+- **OpenAI Responses API 지원 (`/v1/responses`)** — 스트리밍(SSE), 도구 호출, 추론을 지원하는 OpenAI **Codex CLI**용 네이티브 엔드포인트. Codex가 반환하는 서버 측 추론 항목(`rs_...`)은 안전하게 무시되므로, 상태 비저장(`store: false`) 멀티턴 세션이 `Item with id rs_... not found` 오류 없이 작동합니다.
+- **수정: `system` 역할 메시지로 인한 Claude Code 422 오류** — Anthropic 엔드포인트는 Claude Code가 `messages` 배열 안에 `role: "system"` 메시지를 포함한 요청을 거부했습니다 (`role` 필드가 엄격한 `Literal["user", "assistant"]`로 정의되어 Pydantic 검증에 실패). 이제 이러한 메시지가 허용됩니다.
+- **수정: 서버 측 도구 콘텐츠 블록으로 인한 422 오류** — `web_search` 및 기타 서버 측 도구의 콘텐츠 블록이 검증 과정에서 인식되지 않아 422를 유발했습니다. 이제 지원됩니다.
 
 ---
 
@@ -517,6 +527,7 @@ VPN_PROXY_URL=192.168.1.100:8080
 | `/v1/models` | GET | 사용 가능한 모델 목록 |
 | `/v1/chat/completions` | POST | OpenAI Chat Completions API |
 | `/v1/messages` | POST | Anthropic Messages API |
+| `/v1/responses` | POST | OpenAI Responses API (Codex CLI) |
 
 ---
 
@@ -725,6 +736,48 @@ with client.messages.stream(
 
 </details>
 
+### OpenAI Responses API (Codex CLI)
+
+`/v1/responses` 엔드포인트는 [OpenAI Codex CLI](https://github.com/openai/codex)가 사용하는 OpenAI **Responses API** 프로토콜을 구현합니다. 텍스트, 스트리밍(SSE), 도구 호출, 추론을 지원합니다.
+
+<details>
+<summary>🔹 간단한 cURL 요청</summary>
+
+```bash
+curl http://localhost:8000/v1/responses \
+  -H "Authorization: Bearer my-super-secret-password-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "instructions": "You are a helpful coding agent.",
+    "input": "List the files in the current directory.",
+    "stream": true
+  }'
+```
+
+</details>
+
+<details>
+<summary>🤖 Codex CLI를 게이트웨이로 연결</summary>
+
+Codex가 게이트웨이를 OpenAI 호환 공급자로 사용하도록 설정하세요 (`~/.codex/config.toml`에서):
+
+```toml
+model = "claude-sonnet-4-5"
+model_provider = "kiro-gateway"
+
+[model_providers.kiro-gateway]
+name = "Kiro Gateway"
+base_url = "http://localhost:8000/v1"
+wire_api = "responses"
+```
+
+Codex가 전송하는 API 키로 `PROXY_API_KEY`를 설정하세요 (예: `OPENAI_API_KEY` 또는 공급자의 `env_key`를 통해).
+
+> **추론에 대한 참고:** Kiro는 OpenAI의 암호화된 추론 항목이 아닌 일반 텍스트 사고를 생성합니다. 게이트웨이는 추론을 `reasoning` 요약 항목으로 노출하며, Codex가 후속 턴에서 반환하는 모든 `rs_...` 추론 항목을 안전하게 **무시**하므로, 상태 비저장(`store: false`) 멀티턴 세션이 `Item with id rs_... not found` 오류 없이 작동합니다.
+
+</details>
+
 ---
 
 ## 🔧 디버깅
@@ -785,38 +838,6 @@ AGPL-3.0은 이 소프트웨어에 대한 개선이 전체 커뮤니티에 이�
 - 기여를 제출할 권리가 있음
 - 메인테이너에게 기여를 사용하고 재라이선스할 권리를 부여함
 - 프로젝트가 법적으로 보호됨
-
----
-
-## 💖 프로젝트 후원
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Smilies/Smiling%20Face%20with%20Hearts.png" alt="Love" width="80" />
-
-**이 프로젝트가 시간이나 돈을 절약해 주었다면 후원을 고려해 주세요!**
-
-모든 기여가 이 프로젝트를 유지하고 성장시키는 데 도움이 됩니다
-
-<br>
-
-### 🤑 기부
-
-[**☕ 일회성 후원**](https://app.lava.top/products/b4e34d12-3b6b-49b7-be50-50b6a20ed262/f3ea941f-de73-4ad1-bbb6-f82042ef8132)
-
-<br>
-
-### 🪙 또는 암호화폐 전송
-
-| 통화 | 네트워크 | 주소 |
-|:----:|:-------:|:-----|
-| **USDT** | TRC20 | `TSVtgRc9pkC1UgcbVeijBHjFmpkYHDRu26` |
-| **BTC** | Bitcoin | `12GZqxqpcBsqJ4Vf1YreLqwoMGvzBPgJq6` |
-| **ETH** | Ethereum | `0xc86eab3bba3bbaf4eb5b5fff8586f1460f1fd395` |
-| **SOL** | Solana | `9amykF7KibZmdaw66a1oqYJyi75fRqgdsqnG66AK3jvh` |
-| **TON** | TON | `UQBVh8T1H3GI7gd7b-_PPNnxHYYxptrcCVf3qQk5v41h3QTM` |
-
-</div>
 
 ---
 

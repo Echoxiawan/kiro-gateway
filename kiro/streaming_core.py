@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -76,6 +77,8 @@ class KiroEvent:
         context_usage_percentage: Context usage percentage (for context_usage events)
         is_first_thinking_chunk: Whether this is the first thinking chunk
         is_last_thinking_chunk: Whether this is the last thinking chunk
+        stop_reason: Kiro's own stop reason (for metadata events, e.g. "CONTENT_FILTERED")
+        refusal: Refusal explanation text, set when Kiro refused the request (for metadata events)
     """
     type: str
     content: Optional[str] = None
@@ -85,6 +88,8 @@ class KiroEvent:
     context_usage_percentage: Optional[float] = None
     is_first_thinking_chunk: bool = False
     is_last_thinking_chunk: bool = False
+    stop_reason: Optional[str] = None
+    refusal: Optional[str] = None
 
 
 @dataclass
@@ -104,6 +109,7 @@ class StreamResult:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     usage: Optional[Dict[str, Any]] = None
     context_usage_percentage: Optional[float] = None
+    refusal: Optional[str] = None
 
 
 class FirstTokenTimeoutError(Exception):
@@ -274,12 +280,30 @@ async def _process_chunk(
             else:
                 # No thinking parser - pass through as-is
                 yield KiroEvent(type="content", content=content)
-        
+
+        elif event["type"] == "reasoning":
+            # Native model reasoning from runtime.kiro.dev (reasoningContentEvent).
+            # It is already pure thinking content, so we bypass the ThinkingParser's
+            # tag-detection FSM and route straight to the thinking channel. When a
+            # parser exists we still call process_for_output() to honor the handling
+            # mode (e.g. "remove" suppresses thinking output entirely).
+            reasoning_text = event["data"]
+            if thinking_parser:
+                processed = thinking_parser.process_for_output(reasoning_text, False, False)
+                if processed:
+                    yield KiroEvent(type="thinking", thinking_content=processed)
+            else:
+                yield KiroEvent(type="thinking", thinking_content=reasoning_text)
+
         elif event["type"] == "usage":
             yield KiroEvent(type="usage", usage=event["data"])
         
         elif event["type"] == "context_usage":
             yield KiroEvent(type="context_usage", context_usage_percentage=event["data"])
+
+        elif event["type"] == "metadata":
+            data = event["data"]
+            yield KiroEvent(type="metadata", stop_reason=data.get("stop_reason"), refusal=data.get("refusal"))
 
 
 # ==================================================================================================
@@ -321,7 +345,9 @@ async def collect_stream_to_result(
             result.usage = event.usage
         elif event.type == "context_usage" and event.context_usage_percentage is not None:
             result.context_usage_percentage = event.context_usage_percentage
-    
+        elif event.type == "metadata" and event.refusal:
+            result.refusal = event.refusal
+
     # Check for bracket-style tool calls in full content
     bracket_tool_calls = parse_bracket_tool_calls(full_content_for_bracket_tools)
     if bracket_tool_calls:

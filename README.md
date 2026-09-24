@@ -6,16 +6,15 @@
 
 🇬🇧 English • [🇷🇺 Русский](docs/ru/README.md) • [🇨🇳 中文](docs/zh/README.md) • [🇪🇸 Español](docs/es/README.md) • [🇮🇩 Indonesia](docs/id/README.md) • [🇧🇷 Português](docs/pt/README.md) • [🇯🇵 日本語](docs/ja/README.md) • [🇰🇷 한국어](docs/ko/README.md)
 
-Made with ❤️ by [@Jwadow](https://github.com/jwadow)
+Originally by [@Jwadow](https://github.com/jwadow) • Maintained by [@Echoxiawan](https://github.com/Echoxiawan)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-Support_Development-ff69b4)](#-support-the-project)
 
 *Use Claude models from Kiro with Claude Code, OpenCode, OpenClaw, Claw Code, Codex app, Cursor, Cline, Roo Code, Kilo Code, Obsidian, OpenAI SDK, LangChain, Continue and other OpenAI or Anthropic compatible tools*
 
-[Models](#-supported-models) • [Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#%EF%B8%8F-configuration) • [💖 Sponsor](#-support-the-project)
+[Models](#-supported-models) • [Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#%EF%B8%8F-configuration)
 
 </div>
 
@@ -53,6 +52,7 @@ Made with ❤️ by [@Jwadow](https://github.com/jwadow)
 |---------|-------------|
 | 🔌 **OpenAI-compatible API** | Works with any OpenAI-compatible tool |
 | 🔌 **Anthropic-compatible API** | Native `/v1/messages` endpoint |
+| 🔌 **OpenAI Responses API** | Native `/v1/responses` endpoint for OpenAI Codex CLI |
 | 🔀 **Multi-Account Support** | Intelligent failover between multiple accounts |
 | 🌐 **VPN/Proxy Support** | HTTP/SOCKS5 proxy for restricted networks |
 | 🧠 **Extended Thinking** | Reasoning is exclusive to our project |
@@ -64,6 +64,22 @@ Made with ❤️ by [@Jwadow](https://github.com/jwadow)
 | 🔄 **Retry Logic** | Automatic retries on errors (403, 429, 5xx) |
 | 📋 **Extended model list** | Including versioned models |
 | 🔐 **Smart token management** | Automatic refresh before expiration |
+| 🗝️ **External API Key Management** | Create per-user keys with token quotas and expiry |
+| 💳 **Credits / Usage Query** | Check Kiro account usage limits via `/v1/credits` |
+| 🖥️ **Web Admin Console** | Browser-based management UI at `/admin` |
+
+---
+
+## 🆕 What's New in This Fork
+
+> This is a maintained fork with additional fixes and features on top of the upstream project.
+
+- **OpenAI Responses API support (`/v1/responses`)** — Native endpoint for the OpenAI **Codex CLI**, with streaming (SSE), tool calling, and reasoning. Server-side reasoning items (`rs_...`) sent back by Codex are safely ignored, so stateless (`store: false`) multi-turn sessions work without `Item with id rs_... not found` errors.
+- **Fix: Claude Code 422 errors from `system` role messages** — The Anthropic endpoint rejected requests where Claude Code included a `role: "system"` message inside the `messages` array (the `role` field was a strict `Literal["user", "assistant"]`, failing Pydantic validation). Such messages are now accepted.
+- **Fix: 422 errors from server-side tool content blocks** — Content blocks for `web_search` and other server-side tools were not recognized during validation and triggered a 422. They are now supported.
+- **External API Key Management** — Create per-user `sk-gw-...` keys with optional token quotas, Credits thresholds, and expiry dates. Manage keys through the web admin console at `/admin` or via the REST API.
+- **Credits Usage Query (`/v1/credits`)** — Query Kiro account usage limits directly through the gateway. Available to any valid key; rate-limited for external keys.
+- **Web Admin Console (`/admin`)** — Browser-based management UI: create/disable/delete external keys, view usage stats, query Credits, inspect account overview, and copy ready-to-use connection instructions per key.
 
 ---
 
@@ -159,6 +175,9 @@ PROXY_API_KEY="my-super-secret-password-123"
 # Optional
 PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
 KIRO_REGION="us-east-1"
+
+# Admin console (optional — enables /admin web UI and external key management)
+ADMIN_PASSWORD="your-admin-password"
 ```
 
 ### Option 3: AWS SSO Credentials (kiro-cli / Enterprise)
@@ -259,6 +278,42 @@ If you need to manually extract the refresh token (e.g., for debugging), you can
 - Look for requests to: `prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
 
 </details>
+
+---
+
+## 🖥️ Web Admin Console
+
+Set `ADMIN_PASSWORD` in your `.env` to enable the admin console at `http://<host>:<port>/admin`.
+
+```env
+ADMIN_PASSWORD="your-admin-password"
+```
+
+### What You Can Do
+
+| Feature | Description |
+|---------|-------------|
+| **Create external keys** | Generate `sk-gw-...` keys for teammates or clients |
+| **Token quota** | Limit total tokens per key (0 = unlimited). Key returns 429 when exhausted. |
+| **Credits threshold** | Auto-reject requests when account Credits fall below a threshold (0 = off) |
+| **Expiry** | Set permanent, N-day, or exact-datetime expiry per key |
+| **Copy instructions** | One-click copy of a ready-to-send connection guide including real LAN IP and the full key |
+| **Usage stats** | Per-key token and request counters with visual progress bar |
+| **Credits query** | Live Kiro account Credits / usage limits for all initialized accounts |
+| **Account overview** | Account health, failover stats, initialization status |
+
+### External Key Authentication
+
+External keys (`sk-gw-...`) are accepted on all `/v1/*` endpoints exactly like `PROXY_API_KEY`:
+
+```bash
+curl http://192.168.1.100:8001/v1/chat/completions \
+  -H "Authorization: Bearer sk-gw-xxxxxxxxxxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"Hi"}]}'
+```
+
+The admin's own `PROXY_API_KEY` is always unlimited; only external keys are subject to quotas.
 
 ---
 
@@ -517,6 +572,9 @@ Leave `VPN_PROXY_URL` empty (default) if you don't need proxy support.
 | `/v1/models` | GET | List available models |
 | `/v1/chat/completions` | POST | OpenAI Chat Completions API |
 | `/v1/messages` | POST | Anthropic Messages API |
+| `/v1/responses` | POST | OpenAI Responses API (Codex CLI) |
+| `/v1/credits` | GET | Query Kiro account credits / usage limits |
+| `/admin` | GET | Web admin console (requires `ADMIN_PASSWORD`) |
 
 ---
 
@@ -725,6 +783,48 @@ with client.messages.stream(
 
 </details>
 
+### OpenAI Responses API (Codex CLI)
+
+The `/v1/responses` endpoint implements the OpenAI **Responses API** protocol used by [OpenAI Codex CLI](https://github.com/openai/codex). It supports text, streaming (SSE), tool calling, and reasoning.
+
+<details>
+<summary>🔹 Simple cURL Request</summary>
+
+```bash
+curl http://localhost:8000/v1/responses \
+  -H "Authorization: Bearer my-super-secret-password-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "instructions": "You are a helpful coding agent.",
+    "input": "List the files in the current directory.",
+    "stream": true
+  }'
+```
+
+</details>
+
+<details>
+<summary>🤖 Point Codex CLI at the gateway</summary>
+
+Configure Codex to use the gateway as an OpenAI-compatible provider (in `~/.codex/config.toml`):
+
+```toml
+model = "claude-sonnet-4-5"
+model_provider = "kiro-gateway"
+
+[model_providers.kiro-gateway]
+name = "Kiro Gateway"
+base_url = "http://localhost:8000/v1"
+wire_api = "responses"
+```
+
+Set your `PROXY_API_KEY` as the API key Codex sends (e.g. via `OPENAI_API_KEY` or the provider's `env_key`).
+
+> **Note on reasoning:** Kiro produces plaintext thinking, not OpenAI's encrypted reasoning items. The gateway surfaces reasoning as `reasoning` summary items and safely **ignores** any `rs_...` reasoning items Codex sends back in a follow-up turn, so stateless (`store: false`) multi-turn sessions work without `Item with id rs_... not found` errors.
+
+</details>
+
 ---
 
 ## 🔧 Debugging
@@ -823,38 +923,6 @@ By submitting a contribution to this project, you agree to the terms of our [Con
 - You have the right to submit the contribution
 - You grant the maintainer rights to use and relicense your contribution
 - The project remains legally protected
-
----
-
-## 💖 Support the Project
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Smilies/Smiling%20Face%20with%20Hearts.png" alt="Love" width="80" />
-
-**If this project saved you time or money, consider supporting it!**
-
-Every contribution helps keep this project alive and growing
-
-<br>
-
-### 🤑 Donate
-
-[**☕ One-time Support**](https://app.lava.top/products/b4e34d12-3b6b-49b7-be50-50b6a20ed262/f3ea941f-de73-4ad1-bbb6-f82042ef8132)
-
-<br>
-
-### 🪙 Or send crypto
-
-| Currency | Network | Address |
-|:--------:|:-------:|:--------|
-| **USDT** | TRC20 | `TSVtgRc9pkC1UgcbVeijBHjFmpkYHDRu26` |
-| **BTC** | Bitcoin | `12GZqxqpcBsqJ4Vf1YreLqwoMGvzBPgJq6` |
-| **ETH** | Ethereum | `0xc86eab3bba3bbaf4eb5b5fff8586f1460f1fd395` |
-| **SOL** | Solana | `9amykF7KibZmdaw66a1oqYJyi75fRqgdsqnG66AK3jvh` |
-| **TON** | TON | `UQBVh8T1H3GI7gd7b-_PPNnxHYYxptrcCVf3qQk5v41h3QTM` |
-
-</div>
 
 ---
 

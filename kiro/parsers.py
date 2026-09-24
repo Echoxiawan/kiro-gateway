@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -238,14 +239,25 @@ class AwsEventStreamParser:
     """
     
     # Patterns for finding JSON events
+    #
+    # NOTE on reasoning: runtime.kiro.dev streams native model reasoning as a
+    # separate `reasoningContentEvent` whose payload is {"text": "..."}, followed
+    # by a {"signature": "..."} terminator. Older code only knew the injected
+    # <thinking> tag mechanism, so these events were silently dropped. We now
+    # parse them: `text` -> reasoning content, `signature` -> skipped (we mint
+    # our own thinking signature downstream).
     EVENT_PATTERNS = [
         ('{"content":', 'content'),
+        ('{"text":', 'reasoning'),
+        ('{"signature":', 'signature'),
         ('{"name":', 'tool_start'),
         ('{"input":', 'tool_input'),
         ('{"stop":', 'tool_stop'),
         ('{"followupPrompt":', 'followup'),
         ('{"usage":', 'usage'),
         ('{"contextUsagePercentage":', 'context_usage'),
+        ('{"stopReason":', 'metadata'),
+        ('{"stopDetails":', 'metadata'),
     ]
     
     def __init__(self):
@@ -318,6 +330,12 @@ class AwsEventStreamParser:
         """
         if event_type == 'content':
             return self._process_content_event(data)
+        elif event_type == 'reasoning':
+            return self._process_reasoning_event(data)
+        elif event_type == 'signature':
+            # Reasoning terminator from runtime.kiro.dev. We mint our own thinking
+            # signature downstream, so the upstream one is not needed.
+            return None
         elif event_type == 'tool_start':
             return self._process_tool_start_event(data)
         elif event_type == 'tool_input':
@@ -328,8 +346,33 @@ class AwsEventStreamParser:
             return {"type": "usage", "data": data.get('usage', 0)}
         elif event_type == 'context_usage':
             return {"type": "context_usage", "data": data.get('contextUsagePercentage', 0)}
-        
+        elif event_type == 'metadata':
+            return self._process_metadata_event(data)
+
         return None
+
+    def _process_metadata_event(self, data: dict) -> Optional[Dict[str, Any]]:
+        """
+        Processes a metadataEvent carrying Kiro's own stop reason.
+
+        Normally this just mirrors {"stopReason": "END_TURN" | "TOOL_USE" | ...},
+        which downstream code currently infers heuristically and can ignore.
+        The important case is a backend-level refusal, surfaced as:
+            {"stopDetails":{"refusal":{"explanation":"..."}},"stopReason":"CONTENT_FILTERED"}
+        which carries no content/tool events at all, so without this the stream
+        looks like a silent empty completion instead of an explicit refusal.
+        """
+        stop_reason = data.get('stopReason')
+        refusal = (data.get('stopDetails') or {}).get('refusal')
+        if not stop_reason and not refusal:
+            return None
+        return {
+            "type": "metadata",
+            "data": {
+                "stop_reason": stop_reason,
+                "refusal": refusal.get('explanation') if refusal else None,
+            },
+        }
     
     def _process_content_event(self, data: dict) -> Optional[Dict[str, Any]]:
         """Processes content event."""
@@ -347,6 +390,19 @@ class AwsEventStreamParser:
         
         return {"type": "content", "data": content}
     
+    def _process_reasoning_event(self, data: dict) -> Optional[Dict[str, Any]]:
+        """
+        Processes a native reasoning event (reasoningContentEvent).
+
+        runtime.kiro.dev streams model reasoning token-by-token as {"text": "..."}.
+        Unlike content, reasoning chunks are NOT deduplicated: repeated tokens
+        (e.g. the word "the" twice in a row) are legitimate and must be preserved.
+        """
+        text = data.get('text', '')
+        if not text:
+            return None
+        return {"type": "reasoning", "data": text}
+
     def _process_tool_start_event(self, data: dict) -> Optional[Dict[str, Any]]:
         """Processes tool call start."""
         # Finalize previous tool call if exists

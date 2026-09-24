@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -55,6 +56,7 @@ from kiro.utils import generate_conversation_id
 from kiro.tokenizer import estimate_request_tokens
 from kiro.config import WEB_SEARCH_ENABLED
 from kiro.mcp_tools import handle_native_web_search
+from kiro.routes_openai import make_usage_reporter
 
 # Import debug_logger
 try:
@@ -71,34 +73,57 @@ auth_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 
 async def verify_anthropic_api_key(
+    request: Request,
     x_api_key: Optional[str] = Security(anthropic_api_key_header),
     authorization: Optional[str] = Security(auth_header)
 ) -> bool:
     """
     Verify API key for Anthropic API.
-    
+
     Supports two authentication methods:
     1. x-api-key header (Anthropic native)
     2. Authorization: Bearer header (for compatibility)
-    
+
+    Accepted keys:
+    - PROXY_API_KEY (admin key) - unlimited
+    - External keys from api_keys.json - subject to quota checks
+
+    The verified external key is stored in request.state.api_key for
+    usage tracking after the request completes.
+
     Args:
+        request: FastAPI Request for accessing app.state
         x_api_key: Value from x-api-key header
         authorization: Value from Authorization header
-    
+
     Returns:
         True if key is valid
-    
+
     Raises:
         HTTPException: 401 if key is invalid or missing
     """
-    # Check x-api-key first (Anthropic native)
-    if x_api_key and x_api_key == PROXY_API_KEY:
-        return True
-    
-    # Fall back to Authorization: Bearer
-    if authorization and authorization == f"Bearer {PROXY_API_KEY}":
-        return True
-    
+    # Extract candidate keys from both headers
+    from kiro.routes_openai import extract_bearer_key, check_external_key_access
+
+    candidates = []
+    if x_api_key:
+        candidates.append(x_api_key.strip())
+    if authorization:
+        candidates.append(extract_bearer_key(authorization))
+
+    for key in candidates:
+        if not key:
+            continue
+        # Admin key - unlimited access
+        if key == PROXY_API_KEY:
+            return True
+        # External key - check quota/expiration
+        key_manager = getattr(request.app.state, "api_key_manager", None)
+        if key_manager is not None and key_manager.verify_sync(key) is not None:
+            request.state.api_key = key
+            await check_external_key_access(request, key)
+            return True
+
     logger.warning("Access attempt with invalid API key (Anthropic endpoint)")
     raise HTTPException(
         status_code=401,
@@ -437,6 +462,8 @@ async def messages(
                     # SUCCESS - report and return
                     await account_manager.report_success(account.id, request_data.model)
                     
+                    usage_reporter = make_usage_reporter(request)
+                    
                     if request_data.stream:
                         # Streaming mode
                         async def stream_wrapper():
@@ -457,6 +484,7 @@ async def messages(
                                     request_messages=messages_for_tokenizer,
                                     request_tools=tools_for_tokenizer,
                                     request_system=system_for_tokenizer,
+                                    on_usage=usage_reporter,
                                 ):
                                     yield chunk
                             except GeneratorExit:
@@ -505,6 +533,7 @@ async def messages(
                             request_messages=messages_for_tokenizer,
                             request_tools=tools_for_tokenizer,
                             request_system=system_for_tokenizer,
+                            on_usage=usage_reporter,
                         )
                         
                         await http_client.close()
@@ -793,6 +822,8 @@ async def messages(
                 }
             )
         
+        usage_reporter = make_usage_reporter(request)
+        
         if request_data.stream:
             # Streaming mode with first token retry
             async def stream_wrapper():
@@ -815,6 +846,7 @@ async def messages(
                         request_messages=messages_for_tokenizer,
                         request_tools=tools_for_tokenizer,
                         request_system=system_for_tokenizer,
+                        on_usage=usage_reporter,
                     ):
                         yield chunk
                 except GeneratorExit:
@@ -864,6 +896,7 @@ async def messages(
                 request_messages=messages_for_tokenizer,
                 request_tools=tools_for_tokenizer,
                 request_system=system_for_tokenizer,
+                on_usage=usage_reporter,
             )
             
             await http_client.close()

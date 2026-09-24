@@ -6,16 +6,15 @@
 
 [🇬🇧 English](../../README.md) • [🇷🇺 Русский](../ru/README.md) • [🇨🇳 中文](../zh/README.md) • [🇪🇸 Español](../es/README.md) • [🇮🇩 Indonesia](../id/README.md) • [🇧🇷 Português](../pt/README.md) • 🇯🇵 日本語 • [🇰🇷 한국어](../ko/README.md)
 
-[@Jwadow](https://github.com/jwadow) が ❤️ を込めて作成
+原作者 [@Jwadow](https://github.com/jwadow) • メンテナー [@Echoxiawan](https://github.com/Echoxiawan)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-開発を支援-ff69b4)](#-プロジェクトを支援)
 
 *Kiro の Claude モデルを Claude Code、OpenCode、OpenClaw、Claw Code、Codex app、Cursor、Cline、Roo Code、Kilo Code、Obsidian、OpenAI SDK、LangChain、Continue などの OpenAI または Anthropic 互換ツールで使用*
 
-[モデル](#-対応モデル) • [機能](#-機能) • [クイックスタート](#-クイックスタート) • [設定](#%EF%B8%8F-設定) • [💖 サポート](#-プロジェクトを支援)
+[モデル](#-対応モデル) • [機能](#-機能) • [クイックスタート](#-クイックスタート) • [設定](#%EF%B8%8F-設定)
 
 </div>
 
@@ -53,6 +52,7 @@
 |------|------|
 | 🔌 **OpenAI 互換 API** | OpenAI 互換のあらゆるツールで動作 |
 | 🔌 **Anthropic 互換 API** | ネイティブ `/v1/messages` エンドポイント |
+| 🔌 **OpenAI Responses API** | OpenAI Codex CLI 向けのネイティブ `/v1/responses` エンドポイント |
 | 🔀 **マルチアカウントサポート** | 複数アカウント間のインテリジェントなフェイルオーバー |
 | 🌐 **VPN/プロキシサポート** | 制限されたネットワーク向けの HTTP/SOCKS5 プロキシ |
 | 🧠 **拡張思考** | 推論機能は本プロジェクト独自の機能 |
@@ -64,6 +64,22 @@
 | 🔄 **リトライロジック** | エラー時の自動リトライ（403、429、5xx） |
 | 📋 **拡張モデルリスト** | バージョン付きモデルを含む |
 | 🔐 **スマートトークン管理** | 有効期限前に自動更新 |
+| 🗝️ **外部 API Key 管理** | チームやクライアント向けにクォータ付き Key を作成 |
+| 💳 **Credits / 使用量確認** | `/v1/credits` で Kiro アカウントの使用量制限を確認 |
+| 🖥️ **Web 管理コンソール** | `/admin` のブラウザベース管理 UI |
+
+---
+
+## 🆕 このフォークの新機能
+
+> これは、上流プロジェクトに追加の修正と機能を加えたメンテナンス版フォークです。
+
+- **OpenAI Responses API サポート (`/v1/responses`)** — OpenAI **Codex CLI** 向けのネイティブエンドポイントで、ストリーミング (SSE)、ツール呼び出し、推論に対応。Codex が返送するサーバーサイドの推論アイテム (`rs_...`) は安全に無視されるため、ステートレス (`store: false`) なマルチターンセッションでも `Item with id rs_... not found` エラーなしで動作します。
+- **修正：`system` ロールメッセージによる Claude Code の 422 エラー** — Anthropic エンドポイントは、Claude Code が `messages` 配列内に `role: "system"` メッセージを含めたリクエストを拒否していました（`role` フィールドが厳格な `Literal["user", "assistant"]` だったため Pydantic 検証に失敗）。このようなメッセージが受け入れられるようになりました。
+- **修正：サーバーサイドツールコンテンツブロックによる 422 エラー** — `web_search` やその他のサーバーサイドツールのコンテンツブロックが検証時に認識されず、422 が発生していました。これらがサポートされるようになりました。
+- **外部 API Key 管理** — オプションのトークンクォータ、Credits しきい値、有効期限を持つ `sk-gw-...` Key を作成。`/admin` コンソールまたは REST API で管理。
+- **Credits 使用量確認 (`/v1/credits`)** — ゲートウェイ経由で Kiro アカウントの使用量制限を直接確認。有効な Key であれば利用可能；外部 Key はレート制限あり。
+- **Web 管理コンソール (`/admin`)** — ブラウザベース管理 UI：外部 Key の作成/無効化/削除、使用統計の確認、Credits の照会、アカウント概要の確認、Key ごとの接続設定コピー。
 
 ---
 
@@ -159,6 +175,9 @@ PROXY_API_KEY="my-super-secret-password-123"
 # オプション
 PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
 KIRO_REGION="us-east-1"
+
+# 管理コンソール（オプション — /admin Web UI と外部 Key 管理を有効化）
+ADMIN_PASSWORD="your-admin-password"
 ```
 
 ### オプション 3：AWS SSO 認証情報 (kiro-cli / Enterprise)
@@ -517,6 +536,7 @@ VPN_PROXY_URL=192.168.1.100:8080
 | `/v1/models` | GET | 利用可能なモデル一覧 |
 | `/v1/chat/completions` | POST | OpenAI Chat Completions API |
 | `/v1/messages` | POST | Anthropic Messages API |
+| `/v1/responses` | POST | OpenAI Responses API (Codex CLI) |
 
 ---
 
@@ -725,6 +745,48 @@ with client.messages.stream(
 
 </details>
 
+### OpenAI Responses API (Codex CLI)
+
+`/v1/responses` エンドポイントは、[OpenAI Codex CLI](https://github.com/openai/codex) が使用する OpenAI **Responses API** プロトコルを実装しています。テキスト、ストリーミング (SSE)、ツール呼び出し、推論に対応しています。
+
+<details>
+<summary>🔹 シンプルな cURL リクエスト</summary>
+
+```bash
+curl http://localhost:8000/v1/responses \
+  -H "Authorization: Bearer my-super-secret-password-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "instructions": "You are a helpful coding agent.",
+    "input": "List the files in the current directory.",
+    "stream": true
+  }'
+```
+
+</details>
+
+<details>
+<summary>🤖 Codex CLI をゲートウェイに向ける</summary>
+
+Codex を OpenAI 互換プロバイダーとしてゲートウェイを使用するように設定します（`~/.codex/config.toml` 内）：
+
+```toml
+model = "claude-sonnet-4-5"
+model_provider = "kiro-gateway"
+
+[model_providers.kiro-gateway]
+name = "Kiro Gateway"
+base_url = "http://localhost:8000/v1"
+wire_api = "responses"
+```
+
+Codex が送信する API キーとして `PROXY_API_KEY` を設定します（例：`OPENAI_API_KEY` 経由、またはプロバイダーの `env_key` 経由）。
+
+> **推論に関する注意：** Kiro は OpenAI の暗号化された推論アイテムではなく、プレーンテキストの思考を生成します。ゲートウェイは推論を `reasoning` サマリーアイテムとして表示し、Codex が後続のターンで返送する `rs_...` 推論アイテムを安全に**無視**します。そのため、ステートレス (`store: false`) なマルチターンセッションでも `Item with id rs_... not found` エラーなしで動作します。
+
+</details>
+
 ---
 
 ## 🔧 デバッグ
@@ -785,38 +847,6 @@ AGPL-3.0 は、このソフトウェアへの改善がコミュニティ全体�
 - 貢献を提出する権利があること
 - メンテナーに貢献を使用および再ライセンスする権利を付与すること
 - プロジェクトが法的に保護されること
-
----
-
-## 💖 プロジェクトを支援
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Smilies/Smiling%20Face%20with%20Hearts.png" alt="Love" width="80" />
-
-**このプロジェクトが時間やお金を節約したなら、支援をご検討ください！**
-
-すべての貢献がこのプロジェクトの維持と成長に役立ちます
-
-<br>
-
-### 🤑 寄付
-
-[**☕ 一回限りのサポート**](https://app.lava.top/products/b4e34d12-3b6b-49b7-be50-50b6a20ed262/f3ea941f-de73-4ad1-bbb6-f82042ef8132)
-
-<br>
-
-### 🪙 または暗号通貨を送信
-
-| 通貨 | ネットワーク | アドレス |
-|:----:|:----------:|:--------|
-| **USDT** | TRC20 | `TSVtgRc9pkC1UgcbVeijBHjFmpkYHDRu26` |
-| **BTC** | Bitcoin | `12GZqxqpcBsqJ4Vf1YreLqwoMGvzBPgJq6` |
-| **ETH** | Ethereum | `0xc86eab3bba3bbaf4eb5b5fff8586f1460f1fd395` |
-| **SOL** | Solana | `9amykF7KibZmdaw66a1oqYJyi75fRqgdsqnG66AK3jvh` |
-| **TON** | TON | `UQBVh8T1H3GI7gd7b-_PPNnxHYYxptrcCVf3qQk5v41h3QTM` |
-
-</div>
 
 ---
 

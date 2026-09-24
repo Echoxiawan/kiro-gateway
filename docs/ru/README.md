@@ -6,16 +6,15 @@
 
 [🇬🇧 English](../../README.md) • 🇷🇺 Русский • [🇨🇳 中文](../zh/README.md) • [🇪🇸 Español](../es/README.md) • [🇮🇩 Indonesia](../id/README.md) • [🇧🇷 Português](../pt/README.md) • [🇯🇵 日本語](../ja/README.md) • [🇰🇷 한국어](../ko/README.md)
 
-Сделано с ❤️ от [@Jwadow](https://github.com/jwadow)
+Автор [@Jwadow](https://github.com/jwadow) • Поддерживает [@Echoxiawan](https://github.com/Echoxiawan)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-Поддержать_разработку-ff69b4)](#-поддержать-проект)
 
 *Используйте модели Claude из Kiro с Claude Code, OpenCode, OpenClaw, Claw Code, Codex app, Cursor, Cline, Roo Code, Kilo Code, Obsidian, OpenAI SDK, LangChain, Continue и другими инструментами, совместимыми с OpenAI или Anthropic*
 
-[Модели](#-поддерживаемые-модели) • [Возможности](#-возможности) • [Быстрый старт](#-быстрый-старт) • [Конфигурация](#%EF%B8%8F-конфигурация) • [💖 Поддержать](#-поддержать-проект)
+[Модели](#-поддерживаемые-модели) • [Возможности](#-возможности) • [Быстрый старт](#-быстрый-старт) • [Конфигурация](#%EF%B8%8F-конфигурация)
 
 </div>
 
@@ -53,6 +52,7 @@
 |-------------|----------|
 | 🔌 **API, совместимый с OpenAI** | Работает с любым инструментом, совместимым с OpenAI |
 | 🔌 **API, совместимый с Anthropic** | Нативный эндпоинт `/v1/messages` |
+| 🔌 **OpenAI Responses API** | Нативный эндпоинт `/v1/responses` для OpenAI Codex CLI |
 | 🔀 **Поддержка нескольких аккаунтов** | Интеллектуальный переход между несколькими аккаунтами |
 | 🌐 **Поддержка VPN/Proxy** | HTTP/SOCKS5 прокси для ограниченных сетей |
 | 🧠 **Расширенное мышление** | Режим рассуждений — эксклюзив нашего проекта |
@@ -64,6 +64,22 @@
 | 🔄 **Логика повторных попыток** | Автоматические повторы при ошибках (403, 429, 5xx) |
 | 📋 **Расширенный список моделей** | Включая версионные модели |
 | 🔐 **Умное управление токенами** | Автоматическое обновление до истечения срока |
+| 🗝️ **Управление внешними API Key** | Создавайте ключи с квотами для команды или клиентов |
+| 💳 **Credits / Запрос использования** | Проверяйте лимиты Kiro через `/v1/credits` |
+| 🖥️ **Веб-консоль управления** | Веб-интерфейс управления по адресу `/admin` |
+
+---
+
+## 🆕 Что нового в этом форке
+
+> Это поддерживаемый форк с дополнительными исправлениями и возможностями поверх исходного проекта.
+
+- **Поддержка OpenAI Responses API (`/v1/responses`)** — Нативный эндпоинт для OpenAI **Codex CLI** со стримингом (SSE), вызовом инструментов и рассуждениями. Серверные элементы рассуждений (`rs_...`), которые Codex отправляет обратно, безопасно игнорируются, поэтому многошаговые сессии без сохранения состояния (`store: false`) работают без ошибок `Item with id rs_... not found`.
+- **Исправление: ошибки 422 в Claude Code из-за сообщений с ролью `system`** — Эндпоинт Anthropic отклонял запросы, в которых Claude Code включал сообщение `role: "system"` внутри массива `messages` (поле `role` было строгим `Literal["user", "assistant"]`, что приводило к сбою валидации Pydantic). Теперь такие сообщения принимаются.
+- **Исправление: ошибки 422 из-за блоков контента серверных инструментов** — Блоки контента для `web_search` и других серверных инструментов не распознавались при валидации и вызывали ошибку 422. Теперь они поддерживаются.
+- **Управление внешними API Key** — Создавайте ключи `sk-gw-...` с необязательными квотами токенов, порогами Credits и датами истечения. Управление через веб-консоль `/admin` или REST API.
+- **Запрос Credits (`/v1/credits`)** — Запрашивайте лимиты использования Kiro прямо через шлюз. Доступно для любого действительного ключа; для внешних ключей есть ограничение частоты.
+- **Веб-консоль управления (`/admin`)** — Браузерный интерфейс: создание/отключение/удаление внешних ключей, просмотр статистики использования, запрос Credits, обзор аккаунтов и копирование инструкций по подключению для каждого ключа.
 
 ---
 
@@ -159,6 +175,9 @@ PROXY_API_KEY="my-super-secret-password-123"
 # Опционально
 PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
 KIRO_REGION="us-east-1"
+
+# Консоль управления (опционально — включает веб-интерфейс /admin и управление внешними ключами)
+ADMIN_PASSWORD="your-admin-password"
 ```
 
 ### Вариант 3: Учётные данные AWS SSO (kiro-cli / Enterprise)
@@ -517,6 +536,7 @@ VPN_PROXY_URL=192.168.1.100:8080
 | `/v1/models` | GET | Список доступных моделей |
 | `/v1/chat/completions` | POST | OpenAI Chat Completions API |
 | `/v1/messages` | POST | Anthropic Messages API |
+| `/v1/responses` | POST | OpenAI Responses API (Codex CLI) |
 
 ---
 
@@ -725,6 +745,48 @@ with client.messages.stream(
 
 </details>
 
+### OpenAI Responses API (Codex CLI)
+
+Эндпоинт `/v1/responses` реализует протокол OpenAI **Responses API**, используемый [OpenAI Codex CLI](https://github.com/openai/codex). Он поддерживает текст, стриминг (SSE), вызов инструментов и рассуждения.
+
+<details>
+<summary>🔹 Простой cURL-запрос</summary>
+
+```bash
+curl http://localhost:8000/v1/responses \
+  -H "Authorization: Bearer my-super-secret-password-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "instructions": "You are a helpful coding agent.",
+    "input": "List the files in the current directory.",
+    "stream": true
+  }'
+```
+
+</details>
+
+<details>
+<summary>🤖 Настройка Codex CLI на использование шлюза</summary>
+
+Настройте Codex на использование шлюза как провайдера, совместимого с OpenAI (в файле `~/.codex/config.toml`):
+
+```toml
+model = "claude-sonnet-4-5"
+model_provider = "kiro-gateway"
+
+[model_providers.kiro-gateway]
+name = "Kiro Gateway"
+base_url = "http://localhost:8000/v1"
+wire_api = "responses"
+```
+
+Укажите ваш `PROXY_API_KEY` в качестве API-ключа, который отправляет Codex (например, через `OPENAI_API_KEY` или `env_key` провайдера).
+
+> **Примечание о рассуждениях:** Kiro генерирует рассуждения в виде обычного текста, а не зашифрованных элементов рассуждений OpenAI. Шлюз представляет рассуждения как сводные элементы `reasoning` и безопасно **игнорирует** любые элементы рассуждений `rs_...`, которые Codex отправляет обратно в следующем ходе, поэтому многошаговые сессии без сохранения состояния (`store: false`) работают без ошибок `Item with id rs_... not found`.
+
+</details>
+
 ---
 
 ## 🔧 Отладка
@@ -785,38 +847,6 @@ AGPL-3.0 гарантирует, что улучшения этого прогр
 - Вы имеете право отправить вклад
 - Вы предоставляете мейнтейнеру права на использование и перелицензирование вашего вклада
 - Проект остаётся юридически защищённым
-
----
-
-## 💖 Поддержать проект
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Smilies/Smiling%20Face%20with%20Hearts.png" alt="Love" width="80" />
-
-**Если этот проект сэкономил вам время или деньги, рассмотрите возможность его поддержки!**
-
-Каждый вклад помогает поддерживать жизнь и развитие этого проекта
-
-<br>
-
-### 🤑 Пожертвовать
-
-[**☕ Разовая поддержка**](https://app.lava.top/products/b4e34d12-3b6b-49b7-be50-50b6a20ed262/f3ea941f-de73-4ad1-bbb6-f82042ef8132)
-
-<br>
-
-### 🪙 Или отправьте криптовалюту
-
-| Валюта | Сеть | Адрес |
-|:------:|:----:|:------|
-| **USDT** | TRC20 | `TSVtgRc9pkC1UgcbVeijBHjFmpkYHDRu26` |
-| **BTC** | Bitcoin | `12GZqxqpcBsqJ4Vf1YreLqwoMGvzBPgJq6` |
-| **ETH** | Ethereum | `0xc86eab3bba3bbaf4eb5b5fff8586f1460f1fd395` |
-| **SOL** | Solana | `9amykF7KibZmdaw66a1oqYJyi75fRqgdsqnG66AK3jvh` |
-| **TON** | TON | `UQBVh8T1H3GI7gd7b-_PPNnxHYYxptrcCVf3qQk5v41h3QTM` |
-
-</div>
 
 ---
 

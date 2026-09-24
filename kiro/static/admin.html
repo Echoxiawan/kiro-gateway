@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kiro Gateway 管理台</title>
+<style>
+  :root {
+    --bg: #0f1420; --card: #171e2e; --border: #2a3550;
+    --text: #e6ebf5; --muted: #8b96ad; --accent: #4f8cff;
+    --ok: #3ecf8e; --warn: #ffb454; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; display: flex; justify-content: center;
+    padding: 24px 16px;
+  }
+  .wrap { width: 100%; max-width: 1100px; }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-bottom: 12px;
+  }
+  .card h2 { font-size: 13px; margin-bottom: 10px; color: var(--accent); font-weight: 600; }
+  .card-hdr { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .card-hdr h2 { margin-bottom: 0; flex: 1; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  input, select {
+    width: 100%; padding: 7px 10px; border-radius: 7px;
+    border: 1px solid var(--border); background: #101626;
+    color: var(--text); font-size: 13px; margin-bottom: 9px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; }
+  button {
+    width: 100%; padding: 8px; border: none; border-radius: 7px;
+    background: var(--accent); color: #fff; font-size: 13px;
+    font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  button:hover { filter: brightness(1.12); }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  button.danger { background: rgba(255,107,107,.1); color: var(--err); border: 1px solid rgba(255,107,107,.35); }
+  button.danger:hover { background: rgba(255,107,107,.2); }
+  button.sm { width: auto; padding: 3px 9px; font-size: 11px; font-weight: 500; border-radius: 5px; }
+  .kv { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--border); gap: 12px; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--muted); flex-shrink: 0; }
+  .kv .v { text-align: right; word-break: break-all; }
+  .badge { padding: 1px 8px; border-radius: 99px; font-size: 11px; display: inline-block; white-space: nowrap; }
+  .badge.ok  { background: rgba(62,207,142,.15); color: var(--ok); }
+  .badge.bad { background: rgba(255,107,107,.15); color: var(--err); }
+  .badge.warn{ background: rgba(255,180,84,.15);  color: var(--warn); }
+  .bar { height: 5px; border-radius: 3px; background: #0b101c; border: 1px solid var(--border); overflow: hidden; margin: 3px 0 5px; }
+  .bar > i { display: block; height: 100%; background: var(--ok); }
+  .bar.warn > i { background: var(--warn); }
+  .bar.bad  > i { background: var(--err); }
+  .msg { font-size: 12px; margin-top: 7px; min-height: 15px; }
+  .msg.ok  { color: var(--ok); }
+  .msg.err { color: var(--err); }
+  pre {
+    background: #0b101c; border: 1px solid var(--border); border-radius: 7px;
+    padding: 10px 12px; font-size: 11.5px; overflow-x: auto;
+    color: var(--muted); white-space: pre; line-height: 1.75;
+    user-select: all; margin: 0;
+  }
+  .hidden { display: none; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  .accounts > div { margin-bottom: 12px; }
+
+  /* ---- Two-column grid ---- */
+  .grid2 { display: grid; grid-template-columns: 320px 1fr; gap: 12px; align-items: start; }
+
+  /* ---- Key rows ---- */
+  .key-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0; border-bottom: 1px solid var(--border);
+  }
+  .key-row:last-child { border-bottom: none; }
+  .kr-info  { flex: 1; min-width: 0; }
+  .kr-name  { font-size: 13px; font-weight: 600; margin-right: 8px; }
+  .kr-key   { font-family: monospace; font-size: 11px; color: var(--muted); }
+  .kr-meta  { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .kr-quota { flex: 0 0 110px; }
+  .kr-q-bar { margin: 3px 0 1px; }
+  .kr-q-num { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .kr-stat  { flex: 0 0 54px; text-align: center; }
+  .kr-acts  { display: flex; gap: 4px; }
+
+  /* ---- Expiry row ---- */
+  .exp-row { display: flex; gap: 7px; align-items: center; margin-bottom: 9px; }
+  .exp-row select { flex: 0 0 110px; margin-bottom: 0; }
+  .exp-row input  { margin-bottom: 0; flex: 1; }
+
+  /* ---- Overview ---- */
+  .ov-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; padding: 4px 0; }
+  .ov-id  { font-family: monospace; font-size: 11px; color: var(--muted); flex: 1; min-width: 120px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Kiro Gateway 管理台</h1>
+  <div class="sub">API Key 限额管理 / Credits 查询 / 账号概览</div>
+
+  <!-- 登录 -->
+  <div class="card" id="loginCard" style="max-width:380px">
+    <h2>管理登录</h2>
+    <label>管理密码（环境变量 ADMIN_PASSWORD）</label>
+    <input type="password" id="adminPass" placeholder="输入管理密码" autocomplete="current-password">
+    <button onclick="login()">登录</button>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+
+  <!-- 主面板 -->
+  <div class="hidden" id="mainPanel">
+
+    <!-- Credits -->
+    <div class="card">
+      <div class="card-hdr">
+        <h2>Credits 用量</h2>
+        <button class="sm ghost" onclick="loadCredits()">查询</button>
+      </div>
+      <div class="msg" id="creditsMsg"></div>
+      <div id="creditsBody" class="accounts"></div>
+    </div>
+
+    <!-- 两列：表单 | Key 列表 -->
+    <div class="grid2">
+
+      <!-- 左：创建 + 调用方式 -->
+      <div>
+        <div class="card">
+          <h2>新建 API Key</h2>
+          <label>名称</label>
+          <input type="text" id="newKeyName" placeholder="如:张三 / 朋友A">
+          <div class="row">
+            <div>
+              <label>Token 额度（0=不限）</label>
+              <input type="number" id="newKeyQuota" min="0" value="0" placeholder="如 5000000">
+            </div>
+            <div>
+              <label>Credits 阈值（0=关）</label>
+              <input type="number" id="newKeyThreshold" min="0" value="0" step="0.5" placeholder="如 10">
+            </div>
+          </div>
+          <label>有效期</label>
+          <div class="exp-row">
+            <select id="newKeyExpType" onchange="onNewExpTypeChange()">
+              <option value="forever">永久</option>
+              <option value="days">按天</option>
+              <option value="custom">指定时刻</option>
+            </select>
+            <input type="number" id="newKeyExpVal" min="1" placeholder="天数" class="hidden">
+            <input type="datetime-local" id="newKeyExpTime" class="hidden">
+          </div>
+          <button onclick="createKey()">创建 Key</button>
+          <div class="msg" id="createMsg"></div>
+          <div class="hint">Token 额度按 total_tokens 累计（含输入+输出），用完自动 429。Credits 阈值：账号剩余 credits 低于该值时此 key 被拒绝（429）。</div>
+        </div>
+
+        <div class="card">
+          <h2>调用方式</h2>
+          <div class="hint" style="margin-bottom:8px">点击右侧 Key 列表中的<b>「说明」</b>，可一键复制含完整地址和 Key 的使用说明，直接发给对方。</div>
+          <pre id="usageBox"></pre>
+        </div>
+      </div>
+
+      <!-- 右：Key 列表 -->
+      <div class="card" style="margin-bottom:0">
+        <div class="card-hdr">
+          <h2>已有 Key</h2>
+          <button class="sm ghost" onclick="loadKeys()">刷新</button>
+        </div>
+        <div id="keysTable"></div>
+        <div class="msg" id="keysMsg"></div>
+      </div>
+
+    </div><!-- /grid2 -->
+
+    <!-- 账号概览 -->
+    <div class="card">
+      <div class="card-hdr">
+        <h2>账号概览</h2>
+        <button class="sm ghost" onclick="loadOverview()">刷新</button>
+      </div>
+      <div id="overviewBody"></div>
+      <div class="msg" id="overviewMsg"></div>
+    </div>
+
+    <button class="ghost" style="max-width:160px" onclick="logout()">退出管理登录</button>
+  </div>
+</div>
+
+<script>
+let keysCache = [];
+let _cachedBaseUrl = null;
+
+function show(id, text, ok) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  let j = {};
+  try { j = await r.json(); } catch(e) {}
+  return { ok: r.ok, status: r.status, data: j };
+}
+
+async function login() {
+  const pass = document.getElementById('adminPass').value;
+  const { ok, data } = await api('/admin/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: pass })
+  });
+  if (ok) {
+    document.getElementById('loginCard').classList.add('hidden');
+    document.getElementById('mainPanel').classList.remove('hidden');
+    fillUsageBox(); loadKeys(); loadOverview();
+  } else {
+    show('loginMsg', (data.detail && data.detail.detail) || data.detail || '登录失败', false);
+  }
+}
+
+async function logout() {
+  await fetch('/admin/logout', { method: 'POST' });
+  location.reload();
+}
+
+function fmtTime(unix) {
+  if (!unix) return '永久';
+  const d = new Date(unix * 1000);
+  const s = d.toLocaleString();
+  return d.getTime() < Date.now() ? s + ' (已过期)' : s;
+}
+
+function fmtNum(v) {
+  if (v === null || v === undefined) return '-';
+  if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString() : v.toFixed(1);
+  return String(v);
+}
+
+function shortAcct(id) {
+  if (!id) return '-';
+  return id.length > 44 ? id.slice(0, 26) + '…' + id.slice(-14) : id;
+}
+
+// ---- Credits ----
+async function loadCredits() {
+  show('creditsMsg', '查询中…', true);
+  const { ok, data } = await api('/admin/credits');
+  if (!ok) {
+    show('creditsMsg', typeof data.detail === 'string' ? data.detail : '查询失败', false);
+    return;
+  }
+  const box = document.getElementById('creditsBody');
+  box.innerHTML = '';
+  for (const acct of (data.accounts || [])) {
+    const div = document.createElement('div');
+    if (!acct.ok) {
+      div.innerHTML = `<div class="kv"><span class="k">${shortAcct(acct.accountId)}</span><span class="v"><span class="badge bad">查询失败</span></span></div>
+        <pre style="margin-top:4px">${String(acct.error||'').slice(0,200)}</pre>`;
+      box.appendChild(div); continue;
+    }
+    const d = acct.data || {};
+    const sub = d.subscriptionInfo || {};
+    let html = `<div class="kv"><span class="k">${shortAcct(acct.accountId)}</span><span class="v">${sub.subscriptionTitle||'Unknown'}</span></div>`;
+    if (d.nextDateReset) html += `<div class="kv"><span class="k">重置日期</span><span class="v">${new Date(d.nextDateReset*1000).toLocaleDateString()}</span></div>`;
+    for (const b of (d.usageBreakdownList||[])) {
+      const used  = b.currentUsageWithPrecision ?? b.currentUsage ?? 0;
+      const limit = b.usageLimitWithPrecision  ?? b.usageLimit   ?? 0;
+      const pct   = limit > 0 ? Math.min(100, Math.floor(used/limit*100)) : 0;
+      const cls   = pct >= 90 ? ' bad' : pct >= 70 ? ' warn' : '';
+      const name  = b.displayNamePlural || b.displayName || b.resourceType || '-';
+      const rem   = limit > 0 ? Math.max(0, limit-used) : null;
+      let extra = '';
+      if (b.freeTrialInfo?.freeTrialStatus === 'ACTIVE')
+        extra += `<div class="kv"><span class="k" style="color:var(--warn)">试用中</span><span class="v">到期 ${new Date((b.freeTrialInfo.freeTrialExpiry||0)*1000).toLocaleDateString()}</span></div>`;
+      for (const bo of (b.bonuses||[])) {
+        if (bo.status==='ACTIVE'||bo.status==='EXHAUSTED')
+          extra += `<div class="kv"><span class="k" style="color:var(--ok)">${bo.displayName||bo.bonusCode||'加成'}${bo.status==='EXHAUSTED'?'(已用完)':''}</span><span class="v">${fmtNum(bo.currentUsage)} / ${fmtNum(bo.usageLimit)}</span></div>`;
+      }
+      html += `<div class="kv"><span class="k">${name}</span><span class="v">${fmtNum(used)} / ${fmtNum(limit)}${rem!==null?' (剩 '+fmtNum(rem)+')':''}</span></div>
+        <div class="bar${cls}"><i style="width:${pct}%"></i></div>${extra}`;
+    }
+    if (!(d.usageBreakdownList||[]).length)
+      html += '<div class="kv"><span class="k">无用量数据</span><span class="v">企业账号或新账号可能不返回</span></div>';
+    div.innerHTML = html;
+    box.appendChild(div);
+  }
+  show('creditsMsg', '已更新 ' + new Date().toLocaleTimeString(), true);
+}
+
+// ---- Keys ----
+function onNewExpTypeChange() {
+  const t = document.getElementById('newKeyExpType').value;
+  document.getElementById('newKeyExpVal').classList.toggle('hidden', t !== 'days');
+  document.getElementById('newKeyExpTime').classList.toggle('hidden', t !== 'custom');
+}
+
+async function createKey() {
+  const name = document.getElementById('newKeyName').value.trim();
+  const tokenQuota = parseInt(document.getElementById('newKeyQuota').value, 10) || 0;
+  const creditsThreshold = parseFloat(document.getElementById('newKeyThreshold').value) || 0;
+  const t = document.getElementById('newKeyExpType').value;
+  let expiresAt = 0;
+  if (t === 'days') {
+    const v = parseInt(document.getElementById('newKeyExpVal').value, 10);
+    if (!v || v < 1) { show('createMsg', '请填写有效天数', false); return; }
+    expiresAt = Math.floor(Date.now()/1000) + v*86400;
+  } else if (t === 'custom') {
+    const tv = document.getElementById('newKeyExpTime').value;
+    if (!tv) { show('createMsg', '请选择过期时间', false); return; }
+    expiresAt = Math.floor(new Date(tv).getTime()/1000);
+  }
+  const { ok, data } = await api('/admin/keys', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, tokenQuota, creditsThreshold, expiresAt })
+  });
+  if (ok) {
+    show('createMsg', '已创建: ' + data.key.key, true);
+    document.getElementById('newKeyName').value = '';
+    loadKeys();
+  } else {
+    show('createMsg', typeof data.detail==='string' ? data.detail : (data.detail&&data.detail.detail)||'创建失败', false);
+  }
+}
+
+function statusBadge(r) {
+  if (!r.enabled) return '<span class="badge bad">已停用</span>';
+  if (r.expiresAt > 0 && Date.now()/1000 > r.expiresAt) return '<span class="badge warn">已过期</span>';
+  return '<span class="badge ok">有效</span>';
+}
+
+function renderKeys() {
+  const box = document.getElementById('keysTable');
+  if (!keysCache.length) {
+    box.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px 0">暂无外部 Key，用左侧表单创建</div>';
+    return;
+  }
+  let html = '';
+  for (const r of keysCache) {
+    const pct   = r.tokenQuota > 0 ? Math.min(100, r.tokensUsed/r.tokenQuota*100) : 0;
+    const barCls = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
+    const shortKey = r.key.slice(0,10) + '…' + r.key.slice(-6);
+    const nameEsc = (r.name||'').replace(/\\/g,'\\\\').replace(/'/g,'\\x27');
+    const quotaLine = r.tokenQuota > 0
+      ? `<div class="bar ${barCls} kr-q-bar"><i style="width:${pct}%"></i></div><span class="kr-q-num">${fmtNum(r.tokensUsed)} / ${fmtNum(r.tokenQuota)}</span>`
+      : `<span class="kr-q-num">不限 · ${fmtNum(r.tokensUsed)} tok</span>`;
+    const meta = (r.expiresAt ? fmtTime(r.expiresAt) : '永久')
+               + (r.creditsThreshold > 0 ? ' · 阈值 ' + r.creditsThreshold : '');
+    html += `<div class="key-row">
+      <div class="kr-info">
+        <span class="kr-name">${r.name||'(未命名)'}</span><span class="kr-key">${shortKey}</span>
+        <div class="kr-meta">${meta} · ${fmtNum(r.requestsUsed)} 次</div>
+      </div>
+      <div class="kr-quota">${quotaLine}</div>
+      <div class="kr-stat">${statusBadge(r)}</div>
+      <div class="kr-acts">
+        <button class="sm ghost" title="复制完整 Key" onclick="copyKey('${r.key}')">复制</button>
+        <button class="sm ghost" title="复制使用说明" onclick="copyInstructions('${r.key}','${nameEsc}')">说明</button>
+        <button class="sm ghost" onclick="toggleKey('${r.key}',${!r.enabled})">${r.enabled?'停用':'启用'}</button>
+        <button class="sm ghost" onclick="resetKey('${r.key}')">清零</button>
+        <button class="sm danger" onclick="deleteKey('${r.key}')">删除</button>
+      </div>
+    </div>`;
+  }
+  box.innerHTML = html;
+}
+
+async function loadKeys() {
+  const { ok, data } = await api('/admin/keys');
+  if (!ok) {
+    if (String(data.detail).includes('Not logged in')) { logout(); return; }
+    show('keysMsg', typeof data.detail==='string' ? data.detail : '加载失败', false); return;
+  }
+  keysCache = data.keys || [];
+  renderKeys();
+  show('keysMsg', '共 ' + keysCache.length + ' 个 key', true);
+}
+
+async function getBaseUrl() {
+  if (_cachedBaseUrl) return _cachedBaseUrl;
+  try {
+    const r = await fetch('/admin/server-addr');
+    if (r.ok) { const d = await r.json(); _cachedBaseUrl = d.baseUrl; return d.baseUrl; }
+  } catch(e) {}
+  _cachedBaseUrl = window.location.origin + '/v1';
+  return _cachedBaseUrl;
+}
+
+async function fillUsageBox() {
+  const base = await getBaseUrl();
+  document.getElementById('usageBox').textContent =
+    'Base URL:  ' + base + '\n' +
+    'API Key:   <点击右侧「说明」按钮获取>\n\n' +
+    '支持接口:\n' +
+    '  ' + base + '/chat/completions  (OpenAI)\n' +
+    '  ' + base + '/messages          (Anthropic)\n' +
+    '  ' + base + '/responses         (Codex CLI)\n' +
+    '  ' + base + '/models\n' +
+    '  ' + base + '/credits';
+}
+
+function copyKey(key) {
+  navigator.clipboard.writeText(key)
+    .then(()  => show('keysMsg', 'Key 已复制到剪贴板', true))
+    .catch(()=> show('keysMsg', '复制失败，请手动选择复制', false));
+}
+
+async function copyInstructions(key, name) {
+  const base = await getBaseUrl();
+  const text =
+    'Kiro Gateway 使用说明' + (name ? ' (' + name + ')' : '') + '\n\n' +
+    'Base URL:   ' + base + '\n' +
+    'API Key:    ' + key + '\n\n' +
+    '客户端配置:\n' +
+    '  Base URL      → ' + base + '\n' +
+    '  Authorization → Bearer ' + key + '\n\n' +
+    '支持接口:\n' +
+    '  /v1/chat/completions  (OpenAI 格式)\n' +
+    '  /v1/messages          (Anthropic 格式)\n' +
+    '  /v1/responses         (Codex CLI)\n' +
+    '  /v1/models\n' +
+    '  /v1/credits           (查询 Credits 用量)\n\n' +
+    '快速测试:\n' +
+    '  curl ' + base + '/models -H "Authorization: Bearer ' + key + '"';
+  navigator.clipboard.writeText(text)
+    .then(()  => show('keysMsg', (name||key.slice(0,14)+'...') + ' 使用说明已复制', true))
+    .catch(()=> show('keysMsg', '复制失败，请在 HTTPS 或 localhost 下使用', false));
+}
+
+async function toggleKey(key, enable) {
+  const { ok, data } = await api('/admin/keys/update', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, enabled: enable })
+  });
+  if (ok) loadKeys(); else show('keysMsg', typeof data.detail==='string' ? data.detail : '操作失败', false);
+}
+
+async function resetKey(key) {
+  if (!confirm('确定清零该 key 的用量统计？（额度会重新可用）')) return;
+  const { ok, data } = await api('/admin/keys/reset', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key })
+  });
+  if (ok) loadKeys(); else show('keysMsg', typeof data.detail==='string' ? data.detail : '操作失败', false);
+}
+
+async function deleteKey(key) {
+  if (!confirm('确定删除该 key？使用它的客户端会立即收到 401。')) return;
+  const { ok, data } = await api('/admin/keys/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key })
+  });
+  if (ok) loadKeys(); else show('keysMsg', typeof data.detail==='string' ? data.detail : '操作失败', false);
+}
+
+// ---- Overview ----
+async function loadOverview() {
+  const { ok, data } = await api('/admin/overview');
+  if (!ok) { show('overviewMsg', typeof data.detail==='string' ? data.detail : '加载失败', false); return; }
+  const box = document.getElementById('overviewBody');
+  let html = '';
+  for (const a of (data.accounts||[])) {
+    const s = a.stats || {};
+    const badge = a.initialized ? '<span class="badge ok">已初始化</span>' : '<span class="badge bad">未初始化</span>';
+    html += `<div class="ov-row">
+      <span class="ov-id">${shortAcct(a.id)}</span>
+      ${badge}
+      <span>总 ${fmtNum(s.total_requests)} / 成功 ${fmtNum(s.successful_requests)} / 失败 ${fmtNum(s.failed_requests)}</span>
+      ${a.failures > 0 ? `<span class="badge warn">${a.failures} 次连续失败</span>` : ''}
+    </div>`;
+  }
+  if (!html) html = '<span style="color:var(--muted);font-size:12px">无账号</span>';
+  box.innerHTML = html;
+  show('overviewMsg', (data.accountSystem ? '多账号 failover' : '单账号(legacy)') + '  · 已更新 ' + new Date().toLocaleTimeString(), true);
+}
+
+document.getElementById('adminPass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') login();
+});
+
+fetch('/admin/keys').then(r => {
+  if (r.ok) {
+    document.getElementById('loginCard').classList.add('hidden');
+    document.getElementById('mainPanel').classList.remove('hidden');
+    fillUsageBox(); loadKeys(); loadOverview();
+  }
+});
+</script>
+</body>
+</html>

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -78,14 +79,19 @@ from kiro.config import (
     ACCOUNT_SYSTEM,
     ACCOUNTS_CONFIG_FILE,
     ACCOUNTS_STATE_FILE,
+    API_KEYS_FILE,
+    ADMIN_PASSWORD,
     _warn_timeout_configuration,
 )
 from kiro.auth import KiroAuthManager
 from kiro.cache import ModelInfoCache
 from kiro.model_resolver import ModelResolver
 from kiro.account_manager import AccountManager
+from kiro.api_key_manager import APIKeyManager
 from kiro.routes_openai import router as openai_router
 from kiro.routes_anthropic import router as anthropic_router
+from kiro.routes_responses import router as responses_router
+from kiro.routes_admin import router as admin_router
 from kiro.exceptions import validation_exception_handler
 from kiro.debug_middleware import DebugLoggerMiddleware
 
@@ -501,28 +507,47 @@ async def lifespan(app: FastAPI):
     
     # Save initial state
     await app.state.account_manager._save_state()
-    
+
     # Start background task for periodic state saving
     save_task = asyncio.create_task(
         app.state.account_manager.save_state_periodically()
     )
-    
+
+    # ==============================================================================
+    # External API Keys (quota management)
+    # ==============================================================================
+    app.state.api_key_manager = APIKeyManager(keys_file=API_KEYS_FILE)
+    await app.state.api_key_manager.load()
+    api_keys_save_task = asyncio.create_task(
+        app.state.api_key_manager.save_state_periodically()
+    )
+    keys_count = len(app.state.api_key_manager._records)
+    logger.info(f"API key manager initialized ({keys_count} external key(s))")
+
     logger.info("Account system initialized successfully")
-    
+
     yield
-    
+
     # Graceful shutdown
     logger.info("Shutting down application...")
-    
-    # Cancel background task
+
+    # Cancel background tasks
     save_task.cancel()
-    try:
-        await save_task
-    except asyncio.CancelledError:
-        pass
-    
+    api_keys_save_task.cancel()
+    for task in (save_task, api_keys_save_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     # Final state save
     await app.state.account_manager._save_state()
+
+    # Flush pending external key usage
+    try:
+        await app.state.api_key_manager.flush()
+    except Exception as e:
+        logger.warning(f"Error flushing API key state: {e}")
     logger.info("Final state saved")
     
     # Close HTTP client
@@ -570,6 +595,12 @@ app.include_router(openai_router)
 
 # Anthropic-compatible API: /v1/messages
 app.include_router(anthropic_router)
+
+# OpenAI Responses API (Codex CLI): /v1/responses
+app.include_router(responses_router)
+
+# Admin console + external key management + credits query
+app.include_router(admin_router)
 
 
 # --- Uvicorn log config ---
@@ -719,10 +750,12 @@ def print_startup_banner(host: str, port: int) -> None:
     print()
     print(f"  {DIM}API Docs:      {url}/docs{RESET}")
     print(f"  {DIM}Health Check:  {url}/health{RESET}")
+    if ADMIN_PASSWORD:
+        print(f"  {DIM}Admin Console: {url}/admin{RESET}")
     print()
     print(f"  {DIM}{'─' * 48}{RESET}")
     print(f"  {WHITE}💬 Found a bug? Need help? Have questions?{RESET}")
-    print(f"  {YELLOW}➜  https://github.com/jwadow/kiro-gateway/issues{RESET}")
+    print(f"  {YELLOW}➜  https://github.com/Echoxiawan/kiro-gateway/issues{RESET}")
     print(f"  {DIM}{'─' * 48}{RESET}")
     print()
 

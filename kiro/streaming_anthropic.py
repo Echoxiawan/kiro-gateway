@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -31,6 +32,7 @@ This module formats Kiro events into Anthropic SSE format:
 Reference: https://docs.anthropic.com/en/api/messages-streaming
 """
 
+import asyncio
 import json
 import time
 import uuid
@@ -135,7 +137,8 @@ async def stream_kiro_to_anthropic(
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
     request_system: Optional[Any] = None,
-    conversation_id: Optional[str] = None
+    conversation_id: Optional[str] = None,
+    on_usage=None
 ) -> AsyncGenerator[str, None]:
     """
     Generator for converting Kiro stream to Anthropic SSE format.
@@ -153,7 +156,9 @@ async def stream_kiro_to_anthropic(
         request_tools: Original request tools (for token counting)
         request_system: Original system prompt (for token counting)
         conversation_id: Stable conversation ID for truncation recovery (optional)
-    
+        on_usage: Optional callback with final usage dict ({"input_tokens",
+                  "output_tokens"}) after token counting. External key quotas.
+
     Yields:
         Strings in Anthropic SSE format
     
@@ -200,7 +205,8 @@ async def stream_kiro_to_anthropic(
     
     # Track truncated tool calls for recovery
     truncated_tools: List[Dict[str, Any]] = []
-    
+    refusal_text: Optional[str] = None
+
     try:
         # Send message_start event
         yield format_sse_event("message_start", {
@@ -522,7 +528,23 @@ async def stream_kiro_to_anthropic(
                 context_usage_percentage = event.context_usage_percentage
             elif event.type == "usage" and event.usage:
                 upstream_cache_usage.update(_extract_cache_usage_fields(event.usage))
-        
+            elif event.type == "metadata" and event.refusal:
+                refusal_text = event.refusal
+                logger.warning(f"Kiro refused the request (stop_reason={event.stop_reason}): {event.refusal}")
+
+        if refusal_text and not full_content and not full_thinking_content and not tool_blocks:
+            # Kiro refused with no actual output (e.g. CONTENT_FILTERED). Surface this
+            # as an explicit error event instead of a silent empty message_stop,
+            # otherwise the client just sees an assistant turn with nothing in it.
+            yield format_sse_event("error", {
+                "type": "error",
+                "error": {
+                    "type": "content_filter_error",
+                    "message": refusal_text
+                }
+            })
+            return
+
         # Track completion signals for truncation detection
         stream_completed_normally = context_usage_percentage is not None
         
@@ -648,6 +670,19 @@ async def stream_kiro_to_anthropic(
         }
         usage_payload.update(upstream_cache_usage)
 
+        # Notify usage subscriber (external key quota tracking)
+        if on_usage is not None:
+            try:
+                result = on_usage({
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                })
+                if asyncio.iscoroutine(result) or hasattr(result, "__await__"):
+                    await result
+            except Exception as e:
+                logger.warning(f"on_usage callback failed: {e}")
+
         yield format_sse_event("message_delta", {
             "type": "message_delta",
             "delta": {
@@ -725,13 +760,14 @@ async def collect_anthropic_response(
     auth_manager: "KiroAuthManager",
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
-    request_system: Optional[Any] = None
+    request_system: Optional[Any] = None,
+    on_usage=None
 ) -> dict:
     """
     Collect full response from Kiro stream in Anthropic format.
-    
+
     Used for non-streaming mode.
-    
+
     Args:
         response: HTTP response with stream
         model: Model name
@@ -832,13 +868,17 @@ async def collect_anthropic_response(
         )
     
     # Determine stop reason (truncation has highest priority)
-    if content_was_truncated:
+    if result.refusal and not result.content and not result.thinking_content and not result.tool_calls:
+        # Kiro refused with no actual output (e.g. CONTENT_FILTERED).
+        logger.warning(f"Kiro refused the request (non-streaming): {result.refusal}")
+        stop_reason = "refusal"
+    elif content_was_truncated:
         stop_reason = "max_tokens"
     elif result.tool_calls:
         stop_reason = "tool_use"
     else:
         stop_reason = "end_turn"
-    
+
     logger.debug(
         f"[Anthropic Non-Streaming] Completed: "
         f"input_tokens={input_tokens}, output_tokens={output_tokens}, "
@@ -850,6 +890,19 @@ async def collect_anthropic_response(
         "output_tokens": output_tokens
     }
     usage_payload.update(upstream_cache_usage)
+
+    # Notify usage subscriber (external key quota tracking)
+    if on_usage is not None:
+        try:
+            result = on_usage({
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+            })
+            if asyncio.iscoroutine(result) or hasattr(result, "__await__"):
+                await result
+        except Exception as e:
+            logger.warning(f"on_usage callback failed: {e}")
 
     return {
         "id": message_id,
@@ -873,7 +926,8 @@ async def stream_with_first_token_retry_anthropic(
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
-    request_system: Optional[Any] = None
+    request_system: Optional[Any] = None,
+    on_usage=None
 ) -> AsyncGenerator[str, None]:
     """
     Streaming with automatic retry on first token timeout for Anthropic API.
@@ -896,6 +950,7 @@ async def stream_with_first_token_retry_anthropic(
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
         request_system: Original system prompt (for fallback token counting)
+        on_usage: Optional callback with final usage dict (external key quotas)
     
     Yields:
         Strings in Anthropic SSE format
@@ -934,6 +989,7 @@ async def stream_with_first_token_retry_anthropic(
             request_messages=request_messages,
             request_tools=request_tools,
             request_system=request_system,
+            on_usage=on_usage,
         ):
             yield chunk
     

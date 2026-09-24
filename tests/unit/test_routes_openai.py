@@ -26,6 +26,15 @@ from kiro.routes_openai import verify_api_key, router
 from kiro.config import PROXY_API_KEY, APP_VERSION
 
 
+def _make_request():
+    """Build a minimal Request-like mock for verify_api_key."""
+    req = MagicMock()
+    # No external key manager attached by default
+    req.app.state.api_key_manager = None
+    req.state.api_key = None
+    return req
+
+
 # =============================================================================
 # Tests for verify_api_key function
 # =============================================================================
@@ -43,7 +52,7 @@ class TestVerifyApiKey:
         valid_header = f"Bearer {PROXY_API_KEY}"
         
         print("Action: Calling verify_api_key...")
-        result = await verify_api_key(valid_header)
+        result = await verify_api_key(_make_request(), valid_header)
         
         print(f"Comparing result: Expected True, Got {result}")
         assert result is True
@@ -59,7 +68,7 @@ class TestVerifyApiKey:
         
         print("Action: Calling verify_api_key with invalid key...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_api_key(invalid_header)
+            await verify_api_key(_make_request(), invalid_header)
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
@@ -75,7 +84,7 @@ class TestVerifyApiKey:
         
         print("Action: Calling verify_api_key with None...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_api_key(None)
+            await verify_api_key(_make_request(), None)
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
@@ -90,42 +99,40 @@ class TestVerifyApiKey:
         
         print("Action: Calling verify_api_key with empty string...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_api_key("")
+            await verify_api_key(_make_request(), "")
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
     
     @pytest.mark.asyncio
-    async def test_key_without_bearer_prefix_raises_401(self):
+    async def test_key_without_bearer_prefix_returns_true(self):
         """
-        What it does: Verifies that API key without Bearer prefix is rejected.
-        Purpose: Ensure proper Authorization header format is required.
+        What it does: Verifies that a raw key (no Bearer prefix) is accepted.
+        Purpose: External keys are opaque tokens; both header styles work.
         """
         print("Setup: API key without Bearer prefix...")
-        wrong_format = PROXY_API_KEY  # Without "Bearer "
+        raw_key = PROXY_API_KEY  # Without "Bearer "
         
         print("Action: Calling verify_api_key...")
-        with pytest.raises(HTTPException) as exc_info:
-            await verify_api_key(wrong_format)
+        result = await verify_api_key(_make_request(), raw_key)
         
-        print(f"Checking: HTTPException with status 401...")
-        assert exc_info.value.status_code == 401
+        print(f"Comparing result: Expected True, Got {result}")
+        assert result is True
     
     @pytest.mark.asyncio
-    async def test_bearer_with_extra_spaces_raises_401(self):
+    async def test_bearer_with_extra_spaces_returns_true(self):
         """
-        What it does: Verifies that Bearer token with extra spaces is rejected.
-        Purpose: Ensure strict format validation.
+        What it does: Verifies that Bearer token with extra spaces is accepted.
+        Purpose: Whitespace is tolerated when extracting the key.
         """
         print("Setup: Bearer token with extra spaces...")
-        malformed = f"Bearer  {PROXY_API_KEY}"  # Double space
+        tolerant = f"Bearer  {PROXY_API_KEY}"  # Double space
         
         print("Action: Calling verify_api_key...")
-        with pytest.raises(HTTPException) as exc_info:
-            await verify_api_key(malformed)
+        result = await verify_api_key(_make_request(), tolerant)
         
-        print(f"Checking: HTTPException with status 401...")
-        assert exc_info.value.status_code == 401
+        print(f"Comparing result: Expected True, Got {result}")
+        assert result is True
     
     @pytest.mark.asyncio
     async def test_lowercase_bearer_raises_401(self):
@@ -138,7 +145,7 @@ class TestVerifyApiKey:
         
         print("Action: Calling verify_api_key...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_api_key(lowercase)
+            await verify_api_key(_make_request(), lowercase)
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401

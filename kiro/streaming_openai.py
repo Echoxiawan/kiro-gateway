@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -28,6 +29,7 @@ Contains generators for:
 Uses streaming_core.py for parsing Kiro stream into unified KiroEvent objects.
 """
 
+import asyncio
 import json
 import time
 from typing import TYPE_CHECKING, AsyncGenerator, Callable, Awaitable, Optional
@@ -78,17 +80,18 @@ async def stream_kiro_to_openai_internal(
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
-    conversation_id: Optional[str] = None
+    conversation_id: Optional[str] = None,
+    on_usage=None
 ) -> AsyncGenerator[str, None]:
     """
     Internal generator for converting Kiro stream to OpenAI format.
-    
+
     Parses AWS SSE stream and converts events to OpenAI chat.completion.chunk.
     Supports tool calls and usage calculation.
-    
+
     IMPORTANT: This function raises FirstTokenTimeoutError if first token
     is not received within first_token_timeout seconds.
-    
+
     Args:
         client: HTTP client (for connection management)
         response: HTTP response with data stream
@@ -99,19 +102,21 @@ async def stream_kiro_to_openai_internal(
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
         conversation_id: Stable conversation ID for truncation recovery (optional)
-        conversation_id: Stable conversation ID for truncation recovery (optional)
-    
+        on_usage: Optional async callback invoked with the final usage dict
+                  ({"prompt_tokens", "completion_tokens", "total_tokens"})
+                  after token counting completes. Used for external key quotas.
+
     Yields:
         Strings in SSE format: "data: {...}\\n\\n" or "data: [DONE]\\n\\n"
-    
+
     Raises:
         FirstTokenTimeoutError: If first token not received within timeout
-    
+
     Example:
         >>> async for chunk in stream_kiro_to_openai_internal(client, response, "claude-sonnet-4", cache, auth):
         ...     print(chunk)
         data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...}
-        
+
         data: [DONE]
     """
     completion_id = generate_completion_id()
@@ -125,7 +130,8 @@ async def stream_kiro_to_openai_internal(
     
     streaming_error_occurred = False
     tool_calls_from_stream = []
-    
+    refusal_text: Optional[str] = None
+
     try:
         # Use streaming_core.parse_kiro_stream for unified event parsing
         # This handles AWS SSE parsing, first token timeout, and thinking parser
@@ -267,7 +273,32 @@ async def stream_kiro_to_openai_internal(
             
             elif event.type == "context_usage" and event.context_usage_percentage is not None:
                 context_usage_percentage = event.context_usage_percentage
-        
+
+            elif event.type == "metadata" and event.refusal:
+                refusal_text = event.refusal
+                logger.warning(f"Kiro refused the request (stop_reason={event.stop_reason}): {event.refusal}")
+
+        if refusal_text and not full_content and not full_thinking_content and not tool_calls_from_stream:
+            # Kiro refused with no actual output (e.g. CONTENT_FILTERED). Surface this
+            # as an explicit content_filter finish instead of a silent empty completion.
+            delta = {"refusal": refusal_text}
+            if first_chunk:
+                delta["role"] = "assistant"
+            refusal_chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created_time,
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": "content_filter",
+                }]
+            }
+            yield f"data: {json.dumps(refusal_chunk, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
         # Track completion signals for truncation detection
         received_usage = metering_data is not None
         received_context_usage = context_usage_percentage is not None
@@ -404,7 +435,16 @@ async def stream_kiro_to_openai_internal(
         
         if metering_data:
             final_chunk["usage"]["credits_used"] = metering_data
-        
+
+        # Notify usage subscriber (external key quota tracking) before the final chunk
+        if on_usage is not None:
+            try:
+                result = on_usage(final_chunk["usage"])
+                if asyncio.iscoroutine(result) or hasattr(result, "__await__"):
+                    await result
+            except Exception as e:
+                logger.warning(f"on_usage callback failed: {e}")
+
         # Log final token values being sent to client
         logger.debug(
             f"[Usage] {model}: "
@@ -454,14 +494,15 @@ async def stream_kiro_to_openai(
     model_cache: "ModelInfoCache",
     auth_manager: "KiroAuthManager",
     request_messages: Optional[list] = None,
-    request_tools: Optional[list] = None
+    request_tools: Optional[list] = None,
+    on_usage=None
 ) -> AsyncGenerator[str, None]:
     """
     Generator for converting Kiro stream to OpenAI format.
-    
+
     This is a wrapper over stream_kiro_to_openai_internal that does NOT retry.
     Retry logic is implemented in stream_with_first_token_retry.
-    
+
     Args:
         client: HTTP client (for connection management)
         response: HTTP response with data stream
@@ -470,14 +511,16 @@ async def stream_kiro_to_openai(
         auth_manager: Authentication manager
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
-    
+        on_usage: Optional callback with final usage dict (external key quotas)
+
     Yields:
         Strings in SSE format: "data: {...}\\n\\n" or "data: [DONE]\\n\\n"
     """
     async for chunk in stream_kiro_to_openai_internal(
         client, response, model, model_cache, auth_manager,
         request_messages=request_messages,
-        request_tools=request_tools
+        request_tools=request_tools,
+        on_usage=on_usage
     ):
         yield chunk
 
@@ -492,7 +535,8 @@ async def stream_with_first_token_retry(
     max_retries: int = FIRST_TOKEN_MAX_RETRIES,
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
-    request_tools: Optional[list] = None
+    request_tools: Optional[list] = None,
+    on_usage=None
 ) -> AsyncGenerator[str, None]:
     """
     Streaming with automatic retry on first token timeout.
@@ -517,10 +561,11 @@ async def stream_with_first_token_retry(
         first_token_timeout: First token wait timeout (seconds)
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
-    
+        on_usage: Optional callback with final usage dict (external key quotas)
+
     Yields:
         Strings in SSE format
-    
+
     Raises:
         HTTPException: After exhausting all attempts
     
@@ -557,7 +602,8 @@ async def stream_with_first_token_retry(
             auth_manager,
             first_token_timeout=first_token_timeout,
             request_messages=request_messages,
-            request_tools=request_tools
+            request_tools=request_tools,
+            on_usage=on_usage
         ):
             yield chunk
     
@@ -580,11 +626,12 @@ async def collect_stream_response(
     model_cache: "ModelInfoCache",
     auth_manager: "KiroAuthManager",
     request_messages: Optional[list] = None,
-    request_tools: Optional[list] = None
+    request_tools: Optional[list] = None,
+    on_usage=None
 ) -> dict:
     """
     Collect full response from streaming stream.
-    
+
     Used for non-streaming mode - collects all chunks
     and forms a single response.
     
@@ -605,6 +652,7 @@ async def collect_stream_response(
     final_usage = None
     tool_calls = []
     finish_reason = "stop"  # Default fallback
+    refusal_text = None
     completion_id = generate_completion_id()
     
     async for chunk_str in stream_kiro_to_openai(
@@ -614,7 +662,8 @@ async def collect_stream_response(
         model_cache,
         auth_manager,
         request_messages=request_messages,
-        request_tools=request_tools
+        request_tools=request_tools,
+        on_usage=on_usage
     ):
         if not chunk_str.startswith("data:"):
             continue
@@ -634,7 +683,9 @@ async def collect_stream_response(
                 full_reasoning_content += delta["reasoning_content"]
             if "tool_calls" in delta:
                 tool_calls.extend(delta["tool_calls"])
-            
+            if "refusal" in delta:
+                refusal_text = delta["refusal"]
+
             # Extract finish_reason from chunk (streaming already calculated it correctly)
             finish_reason_from_chunk = chunk_data.get("choices", [{}])[0].get("finish_reason")
             if finish_reason_from_chunk:
@@ -651,6 +702,8 @@ async def collect_stream_response(
     message = {"role": "assistant", "content": full_content}
     if full_reasoning_content:
         message["reasoning_content"] = full_reasoning_content
+    if refusal_text:
+        message["refusal"] = refusal_text
     if tool_calls:
         # For non-streaming response remove index field from tool_calls,
         # as it's only required for streaming chunks

@@ -6,16 +6,15 @@
 
 [🇬🇧 English](../../README.md) • [🇷🇺 Русский](../ru/README.md) • [🇨🇳 中文](../zh/README.md) • [🇪🇸 Español](../es/README.md) • 🇮🇩 Indonesia • [🇧🇷 Português](../pt/README.md) • [🇯🇵 日本語](../ja/README.md) • [🇰🇷 한국어](../ko/README.md)
 
-Dibuat dengan ❤️ oleh [@Jwadow](https://github.com/jwadow)
+Dibuat oleh [@Jwadow](https://github.com/jwadow) • Dipelihara oleh [@Echoxiawan](https://github.com/Echoxiawan)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-Dukung_Pengembangan-ff69b4)](#-dukung-proyek)
 
 *Gunakan model Claude dari Kiro dengan Claude Code, OpenCode, OpenClaw, Claw Code, Codex app, Cursor, Cline, Roo Code, Kilo Code, Obsidian, OpenAI SDK, LangChain, Continue dan alat lain yang kompatibel dengan OpenAI atau Anthropic*
 
-[Model](#-model-yang-didukung) • [Fitur](#-fitur) • [Mulai Cepat](#-mulai-cepat) • [Konfigurasi](#%EF%B8%8F-konfigurasi) • [💖 Dukung](#-dukung-proyek)
+[Model](#-model-yang-didukung) • [Fitur](#-fitur) • [Mulai Cepat](#-mulai-cepat) • [Konfigurasi](#%EF%B8%8F-konfigurasi)
 
 </div>
 
@@ -53,6 +52,7 @@ Dibuat dengan ❤️ oleh [@Jwadow](https://github.com/jwadow)
 |-------|-----------|
 | 🔌 **API kompatibel OpenAI** | Bekerja dengan alat apa pun yang kompatibel dengan OpenAI |
 | 🔌 **API kompatibel Anthropic** | Endpoint native `/v1/messages` |
+| 🔌 **OpenAI Responses API** | Endpoint native `/v1/responses` untuk OpenAI Codex CLI |
 | 🔀 **Dukungan Multi-Akun** | Perpindahan cerdas antar beberapa akun |
 | 🌐 **Dukungan VPN/Proxy** | Proxy HTTP/SOCKS5 untuk jaringan terbatas |
 | 🧠 **Pemikiran Diperluas** | Penalaran adalah eksklusif proyek kami |
@@ -64,6 +64,16 @@ Dibuat dengan ❤️ oleh [@Jwadow](https://github.com/jwadow)
 | 🔄 **Logika Retry** | Retry otomatis saat error (403, 429, 5xx) |
 | 📋 **Daftar model diperluas** | Termasuk model berversi |
 | 🔐 **Manajemen token cerdas** | Refresh otomatis sebelum kedaluwarsa |
+
+---
+
+## 🆕 Apa yang Baru di Fork Ini
+
+> Ini adalah fork yang terpelihara dengan perbaikan dan fitur tambahan di atas proyek upstream.
+
+- **Dukungan OpenAI Responses API (`/v1/responses`)** — Endpoint native untuk OpenAI **Codex CLI**, dengan streaming (SSE), pemanggilan alat, dan penalaran. Item penalaran sisi server (`rs_...`) yang dikirim kembali oleh Codex diabaikan dengan aman, sehingga sesi multi-giliran tanpa status (`store: false`) bekerja tanpa error `Item with id rs_... not found`.
+- **Perbaikan: Error 422 Claude Code dari pesan dengan role `system`** — Endpoint Anthropic menolak request di mana Claude Code menyertakan pesan `role: "system"` di dalam array `messages` (field `role` adalah `Literal["user", "assistant"]` yang ketat, sehingga gagal validasi Pydantic). Pesan seperti itu kini diterima.
+- **Perbaikan: Error 422 dari blok konten alat sisi server** — Blok konten untuk `web_search` dan alat sisi server lainnya tidak dikenali selama validasi dan memicu error 422. Kini sudah didukung.
 
 ---
 
@@ -517,6 +527,7 @@ Biarkan `VPN_PROXY_URL` kosong (default) jika Anda tidak memerlukan dukungan pro
 | `/v1/models` | GET | Daftar model yang tersedia |
 | `/v1/chat/completions` | POST | OpenAI Chat Completions API |
 | `/v1/messages` | POST | Anthropic Messages API |
+| `/v1/responses` | POST | OpenAI Responses API (Codex CLI) |
 
 ---
 
@@ -725,6 +736,48 @@ with client.messages.stream(
 
 </details>
 
+### OpenAI Responses API (Codex CLI)
+
+Endpoint `/v1/responses` mengimplementasikan protokol OpenAI **Responses API** yang digunakan oleh [OpenAI Codex CLI](https://github.com/openai/codex). Endpoint ini mendukung teks, streaming (SSE), pemanggilan alat, dan penalaran.
+
+<details>
+<summary>🔹 Request cURL Sederhana</summary>
+
+```bash
+curl http://localhost:8000/v1/responses \
+  -H "Authorization: Bearer my-super-secret-password-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "instructions": "You are a helpful coding agent.",
+    "input": "List the files in the current directory.",
+    "stream": true
+  }'
+```
+
+</details>
+
+<details>
+<summary>🤖 Arahkan Codex CLI ke gateway</summary>
+
+Konfigurasi Codex untuk menggunakan gateway sebagai provider yang kompatibel dengan OpenAI (di `~/.codex/config.toml`):
+
+```toml
+model = "claude-sonnet-4-5"
+model_provider = "kiro-gateway"
+
+[model_providers.kiro-gateway]
+name = "Kiro Gateway"
+base_url = "http://localhost:8000/v1"
+wire_api = "responses"
+```
+
+Atur `PROXY_API_KEY` Anda sebagai API key yang dikirim Codex (misalnya melalui `OPENAI_API_KEY` atau `env_key` provider).
+
+> **Catatan tentang penalaran:** Kiro menghasilkan pemikiran teks biasa, bukan item penalaran terenkripsi milik OpenAI. Gateway menampilkan penalaran sebagai item ringkasan `reasoning` dan dengan aman **mengabaikan** item penalaran `rs_...` apa pun yang dikirim kembali Codex pada giliran berikutnya, sehingga sesi multi-giliran tanpa status (`store: false`) bekerja tanpa error `Item with id rs_... not found`.
+
+</details>
+
 ---
 
 ## 🔧 Debugging
@@ -785,38 +838,6 @@ Dengan mengirimkan kontribusi ke proyek ini, Anda menyetujui ketentuan [Perjanji
 - Anda memiliki hak untuk mengirimkan kontribusi
 - Anda memberikan hak kepada pengelola untuk menggunakan dan melisensi ulang kontribusi Anda
 - Proyek tetap dilindungi secara hukum
-
----
-
-## 💖 Dukung Proyek
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Smilies/Smiling%20Face%20with%20Hearts.png" alt="Love" width="80" />
-
-**Jika proyek ini menghemat waktu atau uang Anda, pertimbangkan untuk mendukungnya!**
-
-Setiap kontribusi membantu menjaga proyek ini tetap hidup dan berkembang
-
-<br>
-
-### 🤑 Donasi
-
-[**☕ Dukungan Sekali**](https://app.lava.top/products/b4e34d12-3b6b-49b7-be50-50b6a20ed262/f3ea941f-de73-4ad1-bbb6-f82042ef8132)
-
-<br>
-
-### 🪙 Atau kirim crypto
-
-| Mata Uang | Jaringan | Alamat |
-|:---------:|:--------:|:-------|
-| **USDT** | TRC20 | `TSVtgRc9pkC1UgcbVeijBHjFmpkYHDRu26` |
-| **BTC** | Bitcoin | `12GZqxqpcBsqJ4Vf1YreLqwoMGvzBPgJq6` |
-| **ETH** | Ethereum | `0xc86eab3bba3bbaf4eb5b5fff8586f1460f1fd395` |
-| **SOL** | Solana | `9amykF7KibZmdaw66a1oqYJyi75fRqgdsqnG66AK3jvh` |
-| **TON** | TON | `UQBVh8T1H3GI7gd7b-_PPNnxHYYxptrcCVf3qQk5v41h3QTM` |
-
-</div>
 
 ---
 

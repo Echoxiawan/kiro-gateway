@@ -22,6 +22,14 @@ from kiro.routes_anthropic import verify_anthropic_api_key, router
 from kiro.config import PROXY_API_KEY
 
 
+def _make_request():
+    """Build a minimal Request-like mock for verify_anthropic_api_key."""
+    req = MagicMock()
+    req.app.state.api_key_manager = None
+    req.state.api_key = None
+    return req
+
+
 # =============================================================================
 # Tests for verify_anthropic_api_key function
 # =============================================================================
@@ -38,7 +46,7 @@ class TestVerifyAnthropicApiKey:
         print("Setup: Creating valid x-api-key...")
         
         print("Action: Calling verify_anthropic_api_key...")
-        result = await verify_anthropic_api_key(x_api_key=PROXY_API_KEY, authorization=None)
+        result = await verify_anthropic_api_key(_make_request(), x_api_key=PROXY_API_KEY, authorization=None)
         
         print(f"Comparing result: Expected True, Got {result}")
         assert result is True
@@ -53,7 +61,7 @@ class TestVerifyAnthropicApiKey:
         valid_auth = f"Bearer {PROXY_API_KEY}"
         
         print("Action: Calling verify_anthropic_api_key...")
-        result = await verify_anthropic_api_key(x_api_key=None, authorization=valid_auth)
+        result = await verify_anthropic_api_key(_make_request(), x_api_key=None, authorization=valid_auth)
         
         print(f"Comparing result: Expected True, Got {result}")
         assert result is True
@@ -68,6 +76,7 @@ class TestVerifyAnthropicApiKey:
         
         print("Action: Calling verify_anthropic_api_key with both headers...")
         result = await verify_anthropic_api_key(
+            _make_request(),
             x_api_key=PROXY_API_KEY,
             authorization="Bearer wrong_key"
         )
@@ -85,7 +94,7 @@ class TestVerifyAnthropicApiKey:
         
         print("Action: Calling verify_anthropic_api_key with invalid key...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_anthropic_api_key(x_api_key="wrong_key", authorization=None)
+            await verify_anthropic_api_key(_make_request(), x_api_key="wrong_key", authorization=None)
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
@@ -100,7 +109,7 @@ class TestVerifyAnthropicApiKey:
         
         print("Action: Calling verify_anthropic_api_key with invalid token...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_anthropic_api_key(x_api_key=None, authorization="Bearer wrong_key")
+            await verify_anthropic_api_key(_make_request(), x_api_key=None, authorization="Bearer wrong_key")
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
@@ -115,7 +124,7 @@ class TestVerifyAnthropicApiKey:
         
         print("Action: Calling verify_anthropic_api_key with no headers...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_anthropic_api_key(x_api_key=None, authorization=None)
+            await verify_anthropic_api_key(_make_request(), x_api_key=None, authorization=None)
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
@@ -130,7 +139,7 @@ class TestVerifyAnthropicApiKey:
         
         print("Action: Calling verify_anthropic_api_key with empty key...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_anthropic_api_key(x_api_key="", authorization=None)
+            await verify_anthropic_api_key(_make_request(), x_api_key="", authorization=None)
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
@@ -145,7 +154,7 @@ class TestVerifyAnthropicApiKey:
         
         print("Action: Calling verify_anthropic_api_key...")
         with pytest.raises(HTTPException) as exc_info:
-            await verify_anthropic_api_key(x_api_key="wrong", authorization=None)
+            await verify_anthropic_api_key(_make_request(), x_api_key="wrong", authorization=None)
         
         print(f"Checking: Error format...")
         detail = exc_info.value.detail

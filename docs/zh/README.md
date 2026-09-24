@@ -6,16 +6,15 @@
 
 [🇬🇧 English](../../README.md) • [🇷🇺 Русский](../ru/README.md) • 🇨🇳 中文 • [🇪🇸 Español](../es/README.md) • [🇮🇩 Indonesia](../id/README.md) • [🇧🇷 Português](../pt/README.md) • [🇯🇵 日本語](../ja/README.md) • [🇰🇷 한국어](../ko/README.md)
 
-由 [@Jwadow](https://github.com/jwadow) 用 ❤️ 制作
+原作者 [@Jwadow](https://github.com/jwadow) • 维护者 [@Echoxiawan](https://github.com/Echoxiawan)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-支持开发-ff69b4)](#-支持项目)
 
 *通过 Claude Code、OpenCode、OpenClaw、Claw Code、Codex app、Cursor、Cline、Roo Code、Kilo Code、Obsidian、OpenAI SDK、LangChain、Continue 和其他兼容 OpenAI 或 Anthropic 的工具使用 Kiro 的 Claude 模型*
 
-[模型](#-支持的模型) • [功能](#-功能特性) • [快速开始](#-快速开始) • [配置](#%EF%B8%8F-配置) • [💖 支持](#-支持项目)
+[模型](#-支持的模型) • [功能](#-功能特性) • [快速开始](#-快速开始) • [配置](#%EF%B8%8F-配置)
 
 </div>
 
@@ -53,6 +52,7 @@
 |------|------|
 | 🔌 **兼容 OpenAI 的 API** | 与任何兼容 OpenAI 的工具配合使用 |
 | 🔌 **兼容 Anthropic 的 API** | 原生 `/v1/messages` 端点 |
+| 🔌 **OpenAI Responses API** | 面向 OpenAI Codex CLI 的原生 `/v1/responses` 端点 |
 | 🔀 **多账户支持** | 多个账户之间的智能故障转移 |
 | 🌐 **VPN/代理支持** | 用于受限网络的 HTTP/SOCKS5 代理 |
 | 🧠 **扩展思维** | 推理功能是我们项目的独家特性 |
@@ -64,6 +64,22 @@
 | 🔄 **重试逻辑** | 错误时自动重试（403、429、5xx） |
 | 📋 **扩展模型列表** | 包括版本化模型 |
 | 🔐 **智能令牌管理** | 到期前自动刷新 |
+| 🗝️ **外部 API Key 管理** | 创建限额 Key，分发给团队成员或客户使用 |
+| 💳 **Credits / 用量查询** | 通过 `/v1/credits` 查询 Kiro 账户用量限制 |
+| 🖥️ **Web 管理台** | 浏览器管理界面，访问 `/admin` |
+
+---
+
+## 🆕 本 Fork 的新特性
+
+> 这是一个持续维护的 fork,在上游项目的基础上增加了额外的修复和功能。
+
+- **OpenAI Responses API 支持 (`/v1/responses`)** — 面向 OpenAI **Codex CLI** 的原生端点,支持流式传输 (SSE)、工具调用和推理。Codex 回传的服务端推理项 (`rs_...`) 会被安全忽略,因此无状态 (`store: false`) 的多轮会话可以正常工作,不会出现 `Item with id rs_... not found` 错误。
+- **修复:Claude Code 因 `system` 角色消息导致的 422 错误** — 当 Claude Code 在 `messages` 数组中包含 `role: "system"` 的消息时,Anthropic 端点会拒绝该请求(`role` 字段原本是严格的 `Literal["user", "assistant"]`,导致 Pydantic 校验失败)。现在此类消息可以被正常接受。
+- **修复:服务端工具内容块导致的 422 错误** — `web_search` 及其他服务端工具的内容块在校验时未被识别,从而触发 422。现在已支持这些内容块。
+- **外部 API Key 管理** — 创建带有可选 Token 配额、Credits 阈值和有效期的 `sk-gw-...` Key。通过 `/admin` 管理台或 REST API 管理。
+- **Credits 用量查询 (`/v1/credits`)** — 直接通过网关查询 Kiro 账户用量限制。任何有效 Key 均可使用；外部 Key 有频率限制。
+- **Web 管理台 (`/admin`)** — 浏览器管理界面：创建/禁用/删除外部 Key、查看用量统计、查询 Credits、查看账户总览，以及一键复制每个 Key 的连接配置说明。
 
 ---
 
@@ -159,6 +175,9 @@ PROXY_API_KEY="my-super-secret-password-123"
 # 可选
 PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
 KIRO_REGION="us-east-1"
+
+# 管理台（可选 — 启用 /admin Web 界面和外部 Key 管理）
+ADMIN_PASSWORD="your-admin-password"
 ```
 
 ### 选项 3：AWS SSO 凭据 (kiro-cli / Enterprise)
@@ -259,6 +278,42 @@ PROXY_API_KEY="my-super-secret-password-123"
 - 查找发往以下地址的请求：`prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
 
 </details>
+
+---
+
+## 🖥️ Web 管理台
+
+在您的 `.env` 中设置 `ADMIN_PASSWORD` 以启用 `http://<host>:<port>/admin` 上的管理台。
+
+```env
+ADMIN_PASSWORD="your-admin-password"
+```
+
+### 可以做什么
+
+| 功能 | 描述 |
+|------|------|
+| **创建外部 Key** | 为团队成员或客户生成 `sk-gw-...` Key |
+| **Token 配额** | 限制每个 Key 的总 Token 数（0 = 无限制）。配额耗尽后返回 429 |
+| **Credits 阈值** | 当账户 Credits 低于阈值时自动拒绝请求（0 = 关闭） |
+| **有效期** | 为每个 Key 设置永久、N 天或精确日期时间的有效期 |
+| **复制配置说明** | 一键复制包含真实局域网 IP 和完整 Key 的连接配置指南 |
+| **用量统计** | 带可视化进度条的每个 Key 的 Token 和请求计数 |
+| **Credits 查询** | 所有已初始化账户的实时 Kiro 账户 Credits / 用量限制 |
+| **账户总览** | 账户健康状态、故障转移统计和初始化状态 |
+
+### 外部 Key 鉴权
+
+外部 Key（`sk-gw-...`）在所有 `/v1/*` 端点上与 `PROXY_API_KEY` 完全相同地被接受：
+
+```bash
+curl http://192.168.1.100:8001/v1/chat/completions \
+  -H "Authorization: Bearer sk-gw-xxxxxxxxxxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"Hi"}]}'
+```
+
+管理员自己的 `PROXY_API_KEY` 始终无限制；只有外部 Key 受配额约束。
 
 ---
 
@@ -517,6 +572,9 @@ VPN_PROXY_URL=192.168.1.100:8080
 | `/v1/models` | GET | 列出可用模型 |
 | `/v1/chat/completions` | POST | OpenAI Chat Completions API |
 | `/v1/messages` | POST | Anthropic Messages API |
+| `/v1/responses` | POST | OpenAI Responses API (Codex CLI) |
+| `/v1/credits` | GET | 查询 Kiro 账户 Credits / 用量限制 |
+| `/admin` | GET | Web 管理台（需要 `ADMIN_PASSWORD`） |
 
 ---
 
@@ -725,6 +783,48 @@ with client.messages.stream(
 
 </details>
 
+### OpenAI Responses API (Codex CLI)
+
+`/v1/responses` 端点实现了 [OpenAI Codex CLI](https://github.com/openai/codex) 所使用的 OpenAI **Responses API** 协议。它支持文本、流式传输 (SSE)、工具调用和推理。
+
+<details>
+<summary>🔹 简单 cURL 请求</summary>
+
+```bash
+curl http://localhost:8000/v1/responses \
+  -H "Authorization: Bearer my-super-secret-password-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "instructions": "You are a helpful coding agent.",
+    "input": "List the files in the current directory.",
+    "stream": true
+  }'
+```
+
+</details>
+
+<details>
+<summary>🤖 让 Codex CLI 指向该网关</summary>
+
+将 Codex 配置为使用该网关作为兼容 OpenAI 的提供方(在 `~/.codex/config.toml` 中):
+
+```toml
+model = "claude-sonnet-4-5"
+model_provider = "kiro-gateway"
+
+[model_providers.kiro-gateway]
+name = "Kiro Gateway"
+base_url = "http://localhost:8000/v1"
+wire_api = "responses"
+```
+
+将您的 `PROXY_API_KEY` 设置为 Codex 发送的 API 密钥(例如通过 `OPENAI_API_KEY` 或该提供方的 `env_key`)。
+
+> **关于推理的注意事项:** Kiro 产生的是纯文本思考内容,而不是 OpenAI 的加密推理项。网关会将推理内容以 `reasoning` 摘要项的形式呈现,并会安全地**忽略** Codex 在后续轮次中回传的任何 `rs_...` 推理项,因此无状态 (`store: false`) 的多轮会话可以正常工作,不会出现 `Item with id rs_... not found` 错误。
+
+</details>
+
 ---
 
 ## 🔧 调试
@@ -785,38 +885,6 @@ AGPL-3.0 确保对此软件的改进惠及整个社区。如果您修改此网�
 - 您有权提交贡献
 - 您授予维护者使用和重新许可您的贡献的权利
 - 项目保持法律保护
-
----
-
-## 💖 支持项目
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Smilies/Smiling%20Face%20with%20Hearts.png" alt="Love" width="80" />
-
-**如果这个项目为您节省了时间或金钱，请考虑支持它！**
-
-每一份贡献都有助于保持这个项目的活力和发展
-
-<br>
-
-### 🤑 捐赠
-
-[**☕ 一次性支持**](https://app.lava.top/products/b4e34d12-3b6b-49b7-be50-50b6a20ed262/f3ea941f-de73-4ad1-bbb6-f82042ef8132)
-
-<br>
-
-### 🪙 或发送加密货币
-
-| 货币 | 网络 | 地址 |
-|:----:|:----:|:-----|
-| **USDT** | TRC20 | `TSVtgRc9pkC1UgcbVeijBHjFmpkYHDRu26` |
-| **BTC** | Bitcoin | `12GZqxqpcBsqJ4Vf1YreLqwoMGvzBPgJq6` |
-| **ETH** | Ethereum | `0xc86eab3bba3bbaf4eb5b5fff8586f1460f1fd395` |
-| **SOL** | Solana | `9amykF7KibZmdaw66a1oqYJyi75fRqgdsqnG66AK3jvh` |
-| **TON** | TON | `UQBVh8T1H3GI7gd7b-_PPNnxHYYxptrcCVf3qQk5v41h3QTM` |
-
-</div>
 
 ---
 

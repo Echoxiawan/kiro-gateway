@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -26,8 +27,10 @@ Contains all API endpoints:
 - /v1/chat/completions: Chat completions
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -65,29 +68,167 @@ except ImportError:
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 
-async def verify_api_key(auth_header: str = Security(api_key_header)) -> bool:
+def extract_bearer_key(auth_header: Optional[str]) -> str:
     """
-    Verify API key in Authorization header.
-    
-    Expects format: "Bearer {PROXY_API_KEY}"
-    
+    Extract the raw key from an Authorization header.
+
+    Accepts "Bearer <key>" or the raw key itself.
+
     Args:
         auth_header: Authorization header value
-    
+
+    Returns:
+        Raw key string, empty if header is missing
+    """
+    if not auth_header:
+        return ""
+    if auth_header.startswith("Bearer "):
+        return auth_header[len("Bearer "):].strip()
+    return auth_header.strip()
+
+
+def _get_key_manager(request: Request):
+    """Get APIKeyManager from app.state (None in tests without full app)."""
+    return getattr(request.app.state, "api_key_manager", None)
+
+
+async def check_external_key_access(request: Request, key: str):
+    """
+    Check quota conditions for an external (non-admin) API key.
+
+    Performs the checks that only apply to managed keys:
+    1. Token quota already verified at verify time (verify_sync).
+    2. Kiro credits threshold: if the key sets creditsThreshold > 0, the
+       current account's remaining credits must stay above the threshold.
+
+    Admin key (PROXY_API_KEY) never passes through here.
+
+    Args:
+        request: FastAPI Request (for app.state access)
+        key: Raw external key string
+
+    Raises:
+        HTTPException: 429 when the account is below the credits threshold
+    """
+    key_manager = _get_key_manager(request)
+    if key_manager is None:
+        return
+    record = key_manager.verify_sync(key)
+    if record is None or record.creditsThreshold <= 0:
+        return
+
+    # External key with credits threshold - check account credits (cached)
+    account_manager = getattr(request.app.state, "account_manager", None)
+    if account_manager is None:
+        return
+    try:
+        account = account_manager.get_first_account()
+    except RuntimeError:
+        return
+
+    from kiro.credits import credits_service
+    data, error = await credits_service.query(account.id, account.auth_manager, request.app.state.http_client)
+    if error:
+        # Credits check is best-effort: don't block traffic when the
+        # management endpoint is unreachable
+        logger.warning(f"Credits threshold check skipped (query failed): {error[:100]}")
+        return
+
+    remaining = credits_service.remaining_credits(data)
+    if remaining is not None and remaining < record.creditsThreshold:
+        logger.warning(
+            f"External key '{record.name}' blocked: account credits remaining "
+            f"{remaining:.1f} < threshold {record.creditsThreshold}"
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "type": "error",
+                "error": {
+                    "type": "credits_threshold",
+                    "message": f"Account credits remaining ({remaining:.1f}) is below the configured threshold. Requests are rejected until credits reset."
+                }
+            }
+        )
+
+
+async def verify_api_key(request: Request, auth_header: str = Security(api_key_header)) -> bool:
+    """
+    Verify API key in Authorization header.
+
+    Two kinds of keys are accepted:
+    1. PROXY_API_KEY (admin key) - unlimited, no quota tracking
+    2. External keys from api_keys.json - subject to quota/expiration checks
+
+    The verified external key record is stored in request.state.api_key
+    so usage can be recorded after the request completes.
+
+    Expects format: "Bearer {key}"
+
+    Args:
+        request: FastAPI Request for accessing app.state
+        auth_header: Authorization header value
+
     Returns:
         True if key is valid
-    
+
     Raises:
         HTTPException: 401 if key is invalid or missing
     """
-    if not auth_header or auth_header != f"Bearer {PROXY_API_KEY}":
-        logger.warning("Access attempt with invalid API key.")
-        raise HTTPException(status_code=401, detail="Invalid or missing API Key")
-    return True
+    key = extract_bearer_key(auth_header)
+    if key and key == PROXY_API_KEY:
+        return True
+
+    if key:
+        key_manager = _get_key_manager(request)
+        if key_manager is not None:
+            record = key_manager.verify_sync(key)
+            if record is not None:
+                # Valid external key - remember it for usage tracking
+                request.state.api_key = key
+                await check_external_key_access(request, key)
+                return True
+
+    logger.warning("Access attempt with invalid API key.")
+    raise HTTPException(status_code=401, detail="Invalid or missing API Key")
 
 
 # --- Router ---
 router = APIRouter()
+
+# Fire-and-forget usage recording tasks (kept referenced to avoid GC)
+_PENDING_USAGE_TASKS: set = set()
+
+
+def make_usage_reporter(request: Request):
+    """
+    Build an on_usage callback that records token usage for the external key
+    used in this request. Returns None for admin key (no tracking).
+
+    Args:
+        request: FastAPI Request carrying request.state.api_key
+
+    Returns:
+        Callable[[dict], None] or None
+    """
+    key = getattr(request.state, "api_key", None)
+    if not key:
+        return None
+    key_manager = _get_key_manager(request)
+    if key_manager is None:
+        return None
+
+    def report(usage: dict) -> None:
+        tokens = usage.get("total_tokens", 0) or 0
+        try:
+            # record_usage is async; schedule it without blocking the stream
+            task = asyncio.get_event_loop().create_task(key_manager.record_usage(key, int(tokens)))
+            _PENDING_USAGE_TASKS.add(task)
+            task.add_done_callback(_PENDING_USAGE_TASKS.discard)
+        except Exception as e:
+            logger.warning(f"Failed to record usage for external key: {e}")
+
+    return report
 
 
 @router.get("/")
@@ -389,7 +530,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                                     auth_manager=auth_manager,
                                     initial_response=response,
                                     request_messages=messages_for_tokenizer,
-                                    request_tools=tools_for_tokenizer
+                                    request_tools=tools_for_tokenizer,
+                                    on_usage=usage_reporter
                                 ):
                                     yield chunk
                             except GeneratorExit:
@@ -429,7 +571,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                             model_cache,
                             auth_manager,
                             request_messages=messages_for_tokenizer,
-                            request_tools=tools_for_tokenizer
+                            request_tools=tools_for_tokenizer,
+                            on_usage=usage_reporter
                         )
                         
                         await http_client.close()
@@ -567,6 +710,9 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         model_cache = account.model_cache
         model_resolver = account.model_resolver
     
+    # Usage reporter for external key quota tracking (None for admin/PROXY key)
+    usage_reporter = make_usage_reporter(request)
+
     # Generate conversation ID for Kiro API (random UUID, not used for tracking)
     conversation_id = generate_conversation_id()
     
@@ -685,7 +831,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         auth_manager=auth_manager,
                         initial_response=response,
                         request_messages=messages_for_tokenizer,
-                        request_tools=tools_for_tokenizer
+                        request_tools=tools_for_tokenizer,
+                        on_usage=usage_reporter
                     ):
                         yield chunk
                 except GeneratorExit:
@@ -731,7 +878,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 model_cache,
                 auth_manager,
                 request_messages=messages_for_tokenizer,
-                request_tools=tools_for_tokenizer
+                request_tools=tools_for_tokenizer,
+                on_usage=usage_reporter
             )
             
             await http_client.close()

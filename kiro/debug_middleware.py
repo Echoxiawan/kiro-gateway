@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -47,6 +48,7 @@ from kiro.config import DEBUG_MODE
 LOGGED_ENDPOINTS = frozenset({
     "/v1/chat/completions",  # OpenAI-compatible endpoint
     "/v1/messages",          # Anthropic-compatible endpoint
+    "/v1/responses",         # OpenAI Responses API (Codex CLI)
 })
 
 

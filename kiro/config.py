@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 # Kiro Gateway
-# https://github.com/jwadow/kiro-gateway
+# https://github.com/Echoxiawan/kiro-gateway
 # Copyright (C) 2025 Jwadow
+# Copyright (C) 2026 Echoxiawan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -143,7 +144,7 @@ PROFILE_ARN: str = os.getenv("PROFILE_ARN", "")
 # - Environment variables: Falls back to this SSO region
 #
 # For manual override of API region, use KIRO_API_REGION environment variable.
-# See: https://github.com/jwadow/kiro-gateway/issues/132
+# See: https://github.com/Echoxiawan/kiro-gateway/issues/132
 REGION: str = os.getenv("KIRO_REGION", "us-east-1")
 
 # Path to credentials file (optional, alternative to .env)
@@ -183,6 +184,11 @@ KIRO_API_HOST_TEMPLATE: str = "https://runtime.{region}.kiro.dev"
 
 # Host for Q API (ListAvailableModels)
 KIRO_Q_HOST_TEMPLATE: str = "https://runtime.{region}.kiro.dev"
+
+# Optional: override the complete API host (bypasses the template).
+# Useful when the default runtime.*.kiro.dev domain is blocked by a corporate proxy.
+# Example: KIRO_API_HOST="https://codewhisperer.us-east-1.amazonaws.com"
+KIRO_API_HOST_OVERRIDE: str = os.getenv("KIRO_API_HOST", "")
 
 # ==================================================================================================
 # Token Settings
@@ -275,11 +281,11 @@ HIDDEN_FROM_LIST: List[str] = ["auto"]
 # - Update gateway regularly to get the latest model list
 FALLBACK_MODELS: List[Dict[str, str]] = [
     {"modelId": "auto"},
-    {"modelId": "claude-sonnet-4"},
+    {"modelId": "claude-sonnet-5"},
     {"modelId": "claude-sonnet-4.5"},
     {"modelId": "claude-sonnet-4.6"},
     {"modelId": "claude-haiku-4.5"},
-    {"modelId": "claude-opus-4.5"},
+    {"modelId": "claude-opus-5"},
     {"modelId": "claude-opus-4.6"},
     {"modelId": "claude-opus-4.7"},
     {"modelId": "deepseek-3.2"},
@@ -550,6 +556,26 @@ ACCOUNT_CACHE_TTL: int = int(os.getenv("ACCOUNT_CACHE_TTL", "43200"))
 
 # Interval for periodic state.json saving in seconds
 STATE_SAVE_INTERVAL_SECONDS: int = int(os.getenv("STATE_SAVE_INTERVAL_SECONDS", "10"))
+
+# ==================================================================================================
+# External API Keys & Admin Console Settings
+# ==================================================================================================
+
+# Path to external API keys file (managed via the admin web page).
+# Keys in this file are separate from PROXY_API_KEY (which stays unlimited admin).
+API_KEYS_FILE: str = os.getenv("API_KEYS_FILE", "api_keys.json")
+
+# Admin console password for the web management page (/admin).
+# Empty = admin page disabled (login rejected).
+ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "")
+
+# Cache TTL for Kiro credits (getUsageLimits) queries in seconds.
+# Short cache prevents external keys from hammering the Kiro management endpoint.
+CREDITS_CACHE_TTL: int = int(os.getenv("CREDITS_CACHE_TTL", "30"))
+
+# Max /v1/credits queries per key per window (60s). Prevents abuse of the
+# shared credits endpoint by external keys. 0 = unlimited.
+CREDITS_QUERY_LIMIT: int = int(os.getenv("CREDITS_QUERY_LIMIT", "10"))
 
 # ==================================================================================================
 # Application Version
