@@ -20,29 +20,40 @@ Criado por [@Jwadow](https://github.com/jwadow) • Mantido por [@Echoxiawan](ht
 
 ---
 
-## 🤖 Modelos Disponíveis (Lista Gratuita)
+## 🤖 Modelos Suportados
 
-> ⚠️ **Importante:** A disponibilidade de modelos depende do seu plano Kiro (gratuito/pago). O gateway fornece acesso aos modelos disponíveis no seu IDE ou CLI com base na sua assinatura. A lista abaixo mostra os modelos comumente disponíveis no **plano gratuito**.
+> A lista abaixo reflete os modelos disponíveis nas **assinaturas pagas do Kiro**. Usuários do plano gratuito podem ver um conjunto reduzido — a disponibilidade real depende da sua conta.
 
-> 🔒 **Claude Opus 4.5** foi removido do plano gratuito em 17 de janeiro de 2026. Pode estar disponível em planos pagos — verifique a lista de modelos no seu IDE/CLI.
+**Série Claude**
 
-🚀 **Claude Sonnet 4.5** — Desempenho equilibrado. Ótimo para programação, escrita e tarefas de uso geral.
+| Modelo | Descrição |
+|--------|-----------|
+| `claude-sonnet-5` | Sonnet mais recente — equilíbrio flagship entre velocidade e inteligência |
+| `claude-sonnet-4.6` | Versão estável do Sonnet |
+| `claude-sonnet-4.5` | Desempenho equilibrado para programação e escrita |
+| `claude-sonnet-4` | Geração anterior, confiável para a maioria das tarefas |
+| `claude-opus-5` | O modelo Claude mais poderoso |
+| `claude-opus-4.8` | Versão Opus de alta capacidade |
+| `claude-opus-4.7` | Versão Opus de alta capacidade |
+| `claude-opus-4.6` | Versão Opus de alta capacidade |
+| `claude-opus-4.5` | Versão Opus de alta capacidade |
+| `claude-haiku-4.5` | Claude mais rápido — ideal para respostas rápidas e tarefas simples |
 
-⚡ **Claude Haiku 4.5** — Velocidade relâmpago. Perfeito para respostas rápidas, tarefas simples e chat.
+**Outros modelos**
 
-📦 **Claude Sonnet 4** — Geração anterior. Ainda poderoso e confiável para a maioria dos casos de uso.
+| Modelo | Descrição |
+|--------|-----------|
+| `auto-kiro` | Seleciona automaticamente o melhor modelo disponível |
+| `deepseek-3.2` | DeepSeek MoE (685B/37B ativos) — programação e raciocínio |
+| `glm-5` | GLM MoE (744B/40B ativos) — sistemas complexos e tarefas agênticas |
+| `gpt-5.6-luna` | Variante GPT-5.6 |
+| `gpt-5.6-sol` | Variante GPT-5.6 |
+| `gpt-5.6-terra` | Variante GPT-5.6 |
+| `minimax-m2.5` | MiniMax MoE (230B/10B ativos) — raciocínio aprimorado |
+| `minimax-m2.1` | MiniMax MoE (230B/10B ativos) — planejamento e tarefas multietapas |
+| `qwen3-coder-next` | Qwen3 MoE (80B/3B ativos) — focado em programação |
 
-💤 **GLM-5** — Modelo MoE aberto (744B parâmetros, 40B ativos). Modelo avançado para engenharia de sistemas complexos e tarefas agênticas de longo prazo.
-
-🐋 **DeepSeek-V3.2** — Modelo MoE aberto (685B parâmetros, 37B ativos). Desempenho equilibrado para programação, raciocínio e tarefas gerais.
-
-🧩 **MiniMax M2.5** — Modelo MoE aberto (230B parâmetros, 10B ativos). Versão aprimorada com capacidades expandidas de raciocínio e tratamento de tarefas.
-
-🧩 **MiniMax M2.1** — Modelo MoE aberto (230B parâmetros, 10B ativos). Ótimo para tarefas complexas, planejamento e fluxos de trabalho multietapas.
-
-🤖 **Qwen3-Coder-Next** — Modelo MoE aberto (80B parâmetros, 3B ativos). Focado em programação. Excelente para desenvolvimento e projetos grandes.
-
-> 💡 **Resolução Inteligente de Modelos:** Use qualquer formato de nome de modelo — `claude-sonnet-4-5`, `claude-sonnet-4.5`, ou até nomes versionados como `claude-sonnet-4-5-20250929`. O gateway normaliza automaticamente.
+> 💡 **Resolução Inteligente de Modelos:** Use qualquer formato de nome — `claude-sonnet-4-5`, `claude-sonnet-4.5`, ou nomes versionados como `claude-sonnet-4-5-20250929`. O gateway normaliza automaticamente.
 
 ---
 

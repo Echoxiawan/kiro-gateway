@@ -20,27 +20,38 @@ Dibuat oleh [@Jwadow](https://github.com/jwadow) • Dipelihara oleh [@Echoxiawa
 
 ---
 
-## 🤖 Model yang Tersedia (Daftar Gratis)
+## 🤖 Model yang Didukung
 
-> ⚠️ **Penting:** Ketersediaan model bergantung pada paket Kiro Anda (gratis/berbayar). Gateway menyediakan akses ke model yang tersedia di IDE atau CLI Anda berdasarkan langganan Anda. Daftar di bawah menunjukkan model yang umumnya tersedia di **paket gratis**.
+> Daftar di bawah mencerminkan model yang tersedia di **langganan berbayar Kiro**. Pengguna paket gratis mungkin melihat daftar yang lebih sedikit — ketersediaan aktual bergantung pada akun Anda.
 
-> 🔒 **Claude Opus 4.5** telah dihapus dari paket gratis pada 17 Januari 2026. Mungkin tersedia di paket berbayar — periksa daftar model di IDE/CLI Anda.
+**Seri Claude**
 
-🚀 **Claude Sonnet 4.5** — Performa seimbang. Bagus untuk coding, menulis, dan tugas umum.
+| Model | Keterangan |
+|-------|------------|
+| `claude-sonnet-5` | Sonnet terbaru — keseimbangan unggulan antara kecepatan dan kecerdasan |
+| `claude-sonnet-4.6` | Rilis Sonnet yang stabil |
+| `claude-sonnet-4.5` | Performa seimbang untuk coding dan penulisan |
+| `claude-sonnet-4` | Generasi sebelumnya, andal untuk sebagian besar tugas |
+| `claude-opus-5` | Model Claude paling kuat |
+| `claude-opus-4.8` | Rilis Opus berkemampuan tinggi |
+| `claude-opus-4.7` | Rilis Opus berkemampuan tinggi |
+| `claude-opus-4.6` | Rilis Opus berkemampuan tinggi |
+| `claude-opus-4.5` | Rilis Opus berkemampuan tinggi |
+| `claude-haiku-4.5` | Claude tercepat — ideal untuk respons cepat dan tugas sederhana |
 
-⚡ **Claude Haiku 4.5** — Secepat kilat. Sempurna untuk respons cepat, tugas sederhana, dan chat.
+**Model lainnya**
 
-📦 **Claude Sonnet 4** — Generasi sebelumnya. Masih kuat dan andal untuk sebagian besar kasus penggunaan.
-
-💤 **GLM-5** — Model MoE terbuka (744B parameter, 40B aktif). Model canggih untuk rekayasa sistem kompleks dan tugas agentik jangka panjang.
-
-🐋 **DeepSeek-V3.2** — Model MoE terbuka (685B parameter, 37B aktif). Performa seimbang untuk coding, penalaran, dan tugas umum.
-
-🧩 **MiniMax M2.5** — Model MoE terbuka (230B parameter, 10B aktif). Versi yang ditingkatkan dengan kemampuan penalaran dan penanganan tugas yang lebih baik.
-
-🧩 **MiniMax M2.1** — Model MoE terbuka (230B parameter, 10B aktif). Bagus untuk tugas kompleks, perencanaan, dan alur kerja multi-langkah.
-
-🤖 **Qwen3-Coder-Next** — Model MoE terbuka (80B parameter, 3B aktif). Fokus pada coding. Sempurna untuk pengembangan dan proyek besar.
+| Model | Keterangan |
+|-------|------------|
+| `auto-kiro` | Otomatis memilih model terbaik yang tersedia |
+| `deepseek-3.2` | DeepSeek MoE (685B/37B aktif) — coding dan penalaran |
+| `glm-5` | GLM MoE (744B/40B aktif) — sistem kompleks dan tugas agentik |
+| `gpt-5.6-luna` | Varian GPT-5.6 |
+| `gpt-5.6-sol` | Varian GPT-5.6 |
+| `gpt-5.6-terra` | Varian GPT-5.6 |
+| `minimax-m2.5` | MiniMax MoE (230B/10B aktif) — penalaran yang ditingkatkan |
+| `minimax-m2.1` | MiniMax MoE (230B/10B aktif) — perencanaan dan tugas multi-langkah |
+| `qwen3-coder-next` | Qwen3 MoE (80B/3B aktif) — fokus pada coding |
 
 > 💡 **Resolusi Model Cerdas:** Gunakan format nama model apa pun — `claude-sonnet-4-5`, `claude-sonnet-4.5`, atau bahkan nama berversi seperti `claude-sonnet-4-5-20250929`. Gateway akan menormalisasi secara otomatis.
 
