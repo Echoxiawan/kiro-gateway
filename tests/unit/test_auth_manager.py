@@ -51,20 +51,21 @@ class TestKiroAuthManagerInitialization:
         Purpose: Ensure URLs are dynamically formed with the correct region.
         """
         print("Setup: Creating KiroAuthManager with region eu-west-1...")
-        manager = KiroAuthManager(
-            refresh_token="test_token",
-            region="eu-west-1"
-        )
+        with patch('kiro.auth.KIRO_API_HOST_OVERRIDE', ''):
+            manager = KiroAuthManager(
+                refresh_token="test_token",
+                region="eu-west-1"
+            )
         
-        print("Verification: URLs contain correct region...")
-        print(f"Comparing refresh_url: Expected 'eu-west-1' in URL, Got '{manager._refresh_url}'")
-        assert "eu-west-1" in manager._refresh_url
-        
-        print(f"Comparing api_host: Expected 'eu-west-1' in URL, Got '{manager._api_host}'")
-        assert "eu-west-1" in manager._api_host
-        
-        print(f"Comparing q_host: Expected 'eu-west-1' in URL, Got '{manager._q_host}'")
-        assert "eu-west-1" in manager._q_host
+            print("Verification: URLs contain correct region...")
+            print(f"Comparing refresh_url: Expected 'eu-west-1' in URL, Got '{manager._refresh_url}'")
+            assert "eu-west-1" in manager._refresh_url
+
+            print(f"Comparing api_host: Expected 'eu-west-1' in URL, Got '{manager._api_host}'")
+            assert "eu-west-1" in manager._api_host
+
+            print(f"Comparing q_host: Expected 'eu-west-1' in URL, Got '{manager._q_host}'")
+            assert "eu-west-1" in manager._q_host
     
     def test_initialization_generates_fingerprint(self):
         """

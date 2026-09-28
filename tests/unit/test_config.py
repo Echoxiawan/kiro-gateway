@@ -634,7 +634,7 @@ class TestFallbackModelsIntegration:
         print("\nAction: Testing normalization with dash format...")
         # Test that dash format (claude-opus-4-5) is normalized and found
         test_cases = [
-            ("claude-opus-4-5", "claude-opus-4.5"),  # Dash → Dot
+            ("claude-opus-4-6", "claude-opus-4.6"),  # Dash → Dot
             ("claude-sonnet-4-5", "claude-sonnet-4.5"),  # Dash → Dot
             ("claude-haiku-4-5", "claude-haiku-4.5"),  # Dash → Dot
         ]
