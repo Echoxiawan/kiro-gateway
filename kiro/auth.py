@@ -46,6 +46,7 @@ from kiro.config import (
     TOKEN_REFRESH_THRESHOLD,
     SQLITE_READONLY,
     KIRO_API_HOST_OVERRIDE,
+    KIRO_IDE_VERSION,
     get_kiro_refresh_url,
     get_kiro_api_host,
     get_kiro_q_host,
@@ -759,7 +760,7 @@ class KiroAuthManager:
         payload = {'refreshToken': self._refresh_token}
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": f"KiroIDE-1.1.70-{self._fingerprint}",
+            "User-Agent": f"KiroIDE-{KIRO_IDE_VERSION}-{self._fingerprint}",
         }
         
         async with httpx.AsyncClient(timeout=30) as client:

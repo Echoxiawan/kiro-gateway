@@ -41,7 +41,7 @@ from typing import Any, Dict, Optional, Tuple
 import httpx
 from loguru import logger
 
-from kiro.config import CREDITS_CACHE_TTL
+from kiro.config import CREDITS_CACHE_TTL, KIRO_IDE_VERSION
 
 # Kiro management endpoint template (control plane, not the runtime API)
 MANAGEMENT_URL_TEMPLATE = "https://management.{region}.kiro.dev/getUsageLimits"
@@ -174,7 +174,7 @@ class CreditsService:
             "Authorization": f"Bearer {token}",
             "X-Kiro-Idp": provider_to_idp(auth_manager.provider),
             "Accept": "application/json",
-            "User-Agent": f"KiroIDE-1.1.70-{auth_manager.fingerprint}",
+            "User-Agent": f"KiroIDE-{KIRO_IDE_VERSION}-{auth_manager.fingerprint}",
         }
         if profile_arn:
             headers["X-Kiro-Profile-Arn"] = profile_arn

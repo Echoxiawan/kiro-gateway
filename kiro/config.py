@@ -581,7 +581,8 @@ CREDITS_QUERY_LIMIT: int = int(os.getenv("CREDITS_QUERY_LIMIT", "10"))
 # Application Version
 # ==================================================================================================
 
-APP_VERSION: str = "2.4.dev.13"
+APP_VERSION: str = "2.5.0"
+KIRO_IDE_VERSION: str = os.getenv("KIRO_IDE_VERSION", "1.1.70")
 APP_TITLE: str = "Kiro Gateway"
 APP_DESCRIPTION: str = "Proxy gateway for Kiro API (Amazon Q Developer / AWS CodeWhisperer). OpenAI and Anthropic compatible. Made by @jwadow"
 
