@@ -598,7 +598,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                     try:
                         error_json = json.loads(error_text)
                         from kiro.kiro_errors import enhance_kiro_error
-                        error_info = enhance_kiro_error(error_json)
+                        error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_id)
                         error_reason = error_info.reason
                         last_error_message = error_info.user_message
                         last_error_status = response.status_code
@@ -777,7 +777,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 error_json = json.loads(error_text)
                 # Enhance Kiro API errors with user-friendly messages
                 from kiro.kiro_errors import enhance_kiro_error
-                error_info = enhance_kiro_error(error_json)
+                error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_id)
                 error_message = error_info.user_message
                 # Log original error for debugging
                 logger.debug(f"Original Kiro error: {error_info.original_message} (reason: {error_info.reason})")

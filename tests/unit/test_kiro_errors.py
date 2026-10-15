@@ -240,13 +240,67 @@ class TestEnhanceKiroErrorInvalidModelId:
             "message": "Model not found.",
             "reason": "INVALID_MODEL_ID"
         }
-        
+
         print("Action: Enhancing error...")
         error_info = enhance_kiro_error(error_json)
-        
+
         print("Verification: Same enhanced message regardless of original...")
         assert error_info.user_message == "Invalid model ID or insufficient subscription level to use it."
         assert error_info.original_message == "Model not found."
+
+    def test_invalid_model_id_with_model_context(self):
+        """
+        What it does: Verifies requested model is appended to enhanced message.
+        Purpose: Help users identify which model triggered the error.
+        """
+        print("Setup: Creating error JSON with INVALID_MODEL_ID...")
+        error_json = {
+            "message": "Invalid model ID. Please select a different model to continue.",
+            "reason": "INVALID_MODEL_ID"
+        }
+
+        print("Action: Enhancing error with model context...")
+        error_info = enhance_kiro_error(error_json, model="claude-opus-4-6")
+
+        print("Verification: Model is appended...")
+        assert "claude-opus-4-6" in error_info.user_message
+        assert "requested model" in error_info.user_message
+        assert error_info.reason == "INVALID_MODEL_ID"
+
+    def test_invalid_model_id_with_model_and_request_id(self):
+        """
+        What it does: Verifies both model and request ID are appended to enhanced message.
+        Purpose: Enable end-to-end tracing of failed requests in gateway logs.
+        """
+        print("Setup: Creating error JSON with INVALID_MODEL_ID...")
+        error_json = {
+            "message": "Invalid model ID. Please select a different model to continue.",
+            "reason": "INVALID_MODEL_ID"
+        }
+
+        print("Action: Enhancing error with model and request ID...")
+        error_info = enhance_kiro_error(error_json, model="claude-opus-4-6", request_id="abc123")
+
+        print("Verification: Both context values are appended...")
+        assert "(requested model: 'claude-opus-4-6', request id: 'abc123')" in error_info.user_message
+
+    def test_invalid_model_id_with_request_id_only(self):
+        """
+        What it does: Verifies request ID is appended only when model is also provided.
+        Purpose: Ensure consistent message format - request ID appears inside model context.
+        """
+        print("Setup: Creating error JSON with INVALID_MODEL_ID...")
+        error_json = {
+            "message": "Invalid model ID. Please select a different model to continue.",
+            "reason": "INVALID_MODEL_ID"
+        }
+
+        print("Action: Enhancing error with request ID but no model...")
+        error_info = enhance_kiro_error(error_json, request_id="abc123")
+
+        print("Verification: Request ID is not shown without model...")
+        assert "abc123" not in error_info.user_message
+        assert error_info.user_message == "Invalid model ID or insufficient subscription level to use it."
 
 
 class TestEnhanceKiroErrorUnknown:

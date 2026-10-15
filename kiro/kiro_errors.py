@@ -60,14 +60,23 @@ class KiroErrorInfo:
     original_message: str
 
 
-def enhance_kiro_error(error_json: Dict[str, Any]) -> KiroErrorInfo:
+def enhance_kiro_error(
+    error_json: Dict[str, Any],
+    model: str = None,
+    request_id: str = None
+) -> KiroErrorInfo:
     """
     Enhances Kiro API error with user-friendly message.
-    
+
     Takes raw error JSON from Kiro API and returns structured information
     with enhanced, user-friendly messages that help users understand what
     went wrong without technical jargon.
-    
+
+    Args:
+        error_json: Parsed JSON from Kiro API error response
+        model: Optional requested model ID to include in error context
+        request_id: Optional gateway request/conversation ID for log tracing
+
     Args:
         error_json: Parsed JSON from Kiro API error response
                    Expected format: {"message": "...", "reason": "..."}
@@ -111,7 +120,13 @@ def enhance_kiro_error(error_json: Dict[str, Any]) -> KiroErrorInfo:
     
     elif reason == "INVALID_MODEL_ID":
         # Invalid model name or subscription tier insufficient
+        # Append requested model and request ID so users can trace the failing request
         user_message = "Invalid model ID or insufficient subscription level to use it."
+        if model:
+            user_message += f" (requested model: '{model}'"
+            if request_id:
+                user_message += f", request id: '{request_id}'"
+            user_message += ")"
 
     elif original_message == "Improperly formed request." and reason in (None, "UNKNOWN", "null"):
         # Generic 400 error
