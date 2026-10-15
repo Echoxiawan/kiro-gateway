@@ -16,6 +16,8 @@ Criado por [@Jwadow](https://github.com/jwadow) • Mantido por [@Echoxiawan](ht
 
 [Modelos](#-modelos-suportados) • [Recursos](#-recursos) • [Início Rápido](#-início-rápido) • [Configuração](#%EF%B8%8F-configuração) • [💖 Apoiar](#-apoie-o-projeto)
 
+> ⚠️ **Apenas para uso pessoal com sua própria conta.** O uso deste gateway pode violar os Termos de Serviço do Kiro — consulte o [Aviso Legal](#%EF%B8%8F-aviso-legal) antes de usar.
+
 </div>
 
 ---
@@ -286,6 +288,8 @@ Se você precisar extrair manualmente o refresh token (por exemplo, para depura�
 ## 🔀 Sistema de Contas (Avançado)
 
 O Sistema de Contas é uma forma de gerenciar múltiplas contas Kiro com alternância automática em caso de falha. No futuro, este sistema substituirá o arquivo `.env` para configuração de credenciais, mas atualmente é opcional e destinado para quem deseja usar múltiplas contas.
+
+> ⚠️ Todas as contas configuradas aqui devem ser **de sua propriedade**. Reunir contas de outras pessoas ou revender acesso através de múltiplas contas pode violar os Termos de Serviço do Kiro e as leis aplicáveis. Use com responsabilidade e por sua conta e risco.
 
 ### Por Que Você Precisa Disso
 
@@ -854,7 +858,31 @@ Ao enviar uma contribuição para este projeto, você concorda com os termos do 
 
 ## ⚠️ Aviso Legal
 
-Este projeto não é afiliado, endossado ou patrocinado pela Amazon Web Services (AWS), Anthropic ou Kiro IDE. Use por sua conta e risco e em conformidade com os termos de serviço das APIs subjacentes.
+**Por favor, leia isto cuidadosamente antes de usar este projeto.**
+
+### Natureza Deste Projeto
+
+Este projeto é um proxy de conversão de formato de API para uso pessoal. Ele converte entre formatos de API compatíveis com OpenAI/Anthropic e a API do Kiro (Amazon Q Developer / AWS CodeWhisperer), permitindo que você acesse **sua própria assinatura do Kiro** a partir das ferramentas que preferir. Este projeto não é afiliado, endossado ou patrocinado pela Amazon Web Services (AWS), Anthropic ou Kiro.
+
+### Termos de Serviço
+
+- Usar este gateway pode violar os Termos de Serviço do Kiro / AWS. Você é o único responsável por revisar e cumprir esses termos.
+- Ações que podem violar os ToS incluem: personificar clientes não oficiais, compartilhar sua assinatura com outros, reunir contas que não lhe pertencem, ou revender acesso.
+- As consequências das violações dos ToS são resolvidas entre você e o provedor de serviços, e podem incluir suspensão ou encerramento da conta. Os mantenedores do projeto não assumem nenhuma responsabilidade por quaisquer ações sobre contas.
+
+### Uso Permitido
+
+- Use apenas credenciais (tokens) de contas **que lhe pertençam**.
+- Use para fins pessoais. Não distribua, revenda ou comercialize o acesso a este gateway ou à assinatura subjacente.
+- Não use este software para qualquer finalidade ilegal, incluindo acesso não autorizado a sistemas de computador ou obtenção de dados aos quais você não tem direito.
+
+### Sem Garantia
+
+Este software é fornecido "no estado em que se encontra", sem garantia de qualquer tipo. Os autores e colaboradores não são responsáveis por quaisquer danos, suspensões de contas, perda de dados ou outras consequências decorrentes do uso ou mau uso deste software.
+
+### Conformidade Legal
+
+Você é responsável por garantir que seu uso deste software esteja em conformidade com todas as leis e regulamentos aplicáveis em sua jurisdição, incluindo, mas não se limitando a, leis de segurança de sistemas de informação computacionais, proteção de dados e propriedade intelectual.
 
 ---
 

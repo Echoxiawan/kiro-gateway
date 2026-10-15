@@ -16,6 +16,8 @@ Originally by [@Jwadow](https://github.com/jwadow) • Maintained by [@Echoxiawa
 
 [Models](#-supported-models) • [Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#%EF%B8%8F-configuration)
 
+> ⚠️ **For personal use with your own account only.** Using this gateway may violate Kiro's Terms of Service — see the [Disclaimer](#%EF%B8%8F-disclaimer) before use.
+
 </div>
 
 ---
@@ -304,11 +306,11 @@ ADMIN_PASSWORD="your-admin-password"
 
 | Feature | Description |
 |---------|-------------|
-| **Create external keys** | Generate `sk-gw-...` keys for teammates or clients |
+| **Create external keys** | Generate `sk-gw-...` keys for your own devices or tools |
 | **Token quota** | Limit total tokens per key (0 = unlimited). Key returns 429 when exhausted. |
 | **Credits threshold** | Auto-reject requests when account Credits fall below a threshold (0 = off) |
 | **Expiry** | Set permanent, N-day, or exact-datetime expiry per key |
-| **Copy instructions** | One-click copy of a ready-to-send connection guide including real LAN IP and the full key |
+| **Copy instructions** | One-click copy of a connection guide including real LAN IP and the key |
 | **Usage stats** | Per-key token and request counters with visual progress bar |
 | **Credits query** | Live Kiro account Credits / usage limits for all initialized accounts |
 | **Account overview** | Account health, failover stats, initialization status |
@@ -326,11 +328,15 @@ curl http://192.168.1.100:8001/v1/chat/completions \
 
 The admin's own `PROXY_API_KEY` is always unlimited; only external keys are subject to quotas.
 
+> ⚠️ External keys are intended for use with **your own Kiro account** across your own devices and tools. Sharing your Kiro subscription with others or reselling access may violate Kiro's Terms of Service and can result in account suspension.
+
 ---
 
 ## 🔀 Account System (Advanced)
 
 Account System is a way to manage multiple Kiro accounts with automatic failover. In the future, this system will replace `.env` file for credential configuration, but currently it's optional and intended for those who want to use multiple accounts.
+
+> ⚠️ All accounts configured here must be **owned by you**. Pooling accounts from other people, or reselling access through multiple accounts, may violate Kiro's Terms of Service and applicable laws. Use responsibly and at your own risk.
 
 ### Why You Need This
 
@@ -939,7 +945,31 @@ By submitting a contribution to this project, you agree to the terms of our [Con
 
 ## ⚠️ Disclaimer
 
-This project is not affiliated with, endorsed by, or sponsored by Amazon Web Services (AWS), Anthropic, or Kiro IDE. Use at your own risk and in compliance with the terms of service of the underlying APIs.
+**Please read this carefully before using this project.**
+
+### Nature of This Project
+
+This project is a personal-use API format conversion proxy. It converts between OpenAI/Anthropic-compatible API formats and the Kiro API (Amazon Q Developer / AWS CodeWhisperer), allowing you to access **your own Kiro subscription** from tools you prefer. It is not affiliated with, endorsed by, or sponsored by Amazon Web Services (AWS), Anthropic, or Kiro.
+
+### Terms of Service
+
+- Using this gateway may violate the Terms of Service of Kiro / AWS. You are solely responsible for reviewing and complying with those terms.
+- Actions that may violate the ToS include: impersonating non-official clients, sharing your subscription with others, pooling accounts you do not own, or reselling access.
+- Consequences of ToS violations are between you and the service provider and may include account suspension or termination. The project maintainers bear no responsibility for any account actions.
+
+### Permitted Use
+
+- Use only with credentials (tokens) from accounts **you own**.
+- Use for personal purposes. Do not distribute, resell, or commercialize access to this gateway or the underlying subscription.
+- Do not use this software for any unlawful purpose, including unauthorized access to computer systems or obtaining data you are not entitled to.
+
+### No Warranty
+
+This software is provided "as is", without warranty of any kind. The authors and contributors are not liable for any damages, account suspensions, data loss, or other consequences arising from the use or misuse of this software.
+
+### Legal Compliance
+
+You are responsible for ensuring that your use of this software complies with all applicable laws and regulations in your jurisdiction, including but not limited to computer information system security, data protection, and intellectual property laws.
 
 ---
 

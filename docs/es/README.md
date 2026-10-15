@@ -16,6 +16,8 @@ Autor original [@Jwadow](https://github.com/jwadow) • Mantenido por [@Echoxiaw
 
 [Modelos](#-modelos-soportados) • [Características](#-características) • [Inicio Rápido](#-inicio-rápido) • [Configuración](#%EF%B8%8F-configuración) • [💖 Apoyar](#-apoya-el-proyecto)
 
+> ⚠️ **Solo para uso personal con tu propia cuenta.** El uso de este gateway puede violar los Términos de Servicio de Kiro — consulta el [Descargo de Responsabilidad](#%EF%B8%8F-descargo-de-responsabilidad) antes de usar.
+
 </div>
 
 ---
@@ -75,7 +77,7 @@ Autor original [@Jwadow](https://github.com/jwadow) • Mantenido por [@Echoxiaw
 | 🔄 **Lógica de Reintentos** | Reintentos automáticos en errores (403, 429, 5xx) |
 | 📋 **Lista extendida de modelos** | Incluyendo modelos versionados |
 | 🔐 **Gestión inteligente de tokens** | Actualización automática antes de la expiración |
-| 🗝️ **Gestión de API Keys Externas** | Crea keys con cuotas para distribuir a tu equipo o clientes |
+| 🗝️ **Gestión de API Keys Externas** | Crea keys con cuotas para tus propios dispositivos y herramientas |
 | 💳 **Consulta de Credits / Uso** | Consulta los límites de uso de Kiro mediante `/v1/credits` |
 | 🖥️ **Consola Web de Administración** | Interfaz de gestión en el navegador en `/admin` |
 
@@ -91,6 +93,8 @@ Autor original [@Jwadow](https://github.com/jwadow) • Mantenido por [@Echoxiaw
 - **Gestión de API Keys Externas** — Crea keys `sk-gw-...` con cuotas de tokens opcionales, umbrales de Credits y fechas de expiración. Gestión a través de la consola web `/admin` o la API REST.
 - **Consulta de Credits (`/v1/credits`)** — Consulta los límites de uso de Kiro directamente a través del gateway. Disponible para cualquier key válida; con límite de tasa para keys externas.
 - **Consola Web de Administración (`/admin`)** — Interfaz en el navegador: crear/deshabilitar/eliminar keys externas, ver estadísticas de uso, consultar Credits, inspeccionar el resumen de cuentas y copiar instrucciones de conexión por key.
+
+> ⚠️ Las keys externas están destinadas a usarse con **tu propia cuenta de Kiro** en tus propios dispositivos y herramientas. Compartir tu suscripción de Kiro con otros o revender el acceso puede violar los Términos de Servicio de Kiro y resultar en la suspensión de la cuenta.
 
 ---
 
@@ -295,6 +299,8 @@ Si necesitas extraer manualmente el refresh token (por ejemplo, para depuración
 ## 🔀 Sistema de Cuentas (Avanzado)
 
 El Sistema de Cuentas es una forma de gestionar múltiples cuentas de Kiro con conmutación automática por fallo. En el futuro, este sistema reemplazará el archivo `.env` para la configuración de credenciales, pero actualmente es opcional e indicado para quienes desean usar múltiples cuentas.
+
+> ⚠️ Todas las cuentas configuradas aquí deben ser **de tu propiedad**. Agrupar cuentas de otras personas o revender acceso a través de múltiples cuentas puede violar los Términos de Servicio de Kiro y las leyes aplicables. Úsalo de forma responsable y bajo tu propio riesgo.
 
 ### Por Qué lo Necesitas
 
@@ -863,7 +869,31 @@ Al enviar una contribución a este proyecto, aceptas los términos de nuestro [A
 
 ## ⚠️ Descargo de Responsabilidad
 
-Este proyecto no está afiliado, respaldado ni patrocinado por Amazon Web Services (AWS), Anthropic o Kiro IDE. Úsalo bajo tu propio riesgo y en cumplimiento con los términos de servicio de las APIs subyacentes.
+**Por favor, lee esto cuidadosamente antes de usar este proyecto.**
+
+### Naturaleza de Este Proyecto
+
+Este proyecto es un proxy de conversión de formato API para uso personal. Convierte entre formatos API compatibles con OpenAI/Anthropic y la API de Kiro (Amazon Q Developer / AWS CodeWhisperer), permitiéndote acceder a **tu propia suscripción de Kiro** desde las herramientas que prefieras. No está afiliado, respaldado ni patrocinado por Amazon Web Services (AWS), Anthropic o Kiro.
+
+### Términos de Servicio
+
+- Usar este gateway puede violar los Términos de Servicio de Kiro / AWS. Eres el único responsable de revisar y cumplir con esos términos.
+- Las acciones que pueden violar los ToS incluyen: suplantar clientes no oficiales, compartir tu suscripción con otros, agrupar cuentas que no te pertenecen, o revender acceso.
+- Las consecuencias de las violaciones de los ToS se resuelven entre tú y el proveedor del servicio, y pueden incluir la suspensión o terminación de la cuenta. Los mantenedores del proyecto no asumen ninguna responsabilidad por acciones sobre las cuentas.
+
+### Uso Permitido
+
+- Usa solo credenciales (tokens) de cuentas **que te pertenezcan**.
+- Úsalo con fines personales. No distribuyas, revendas ni comercialices el acceso a este gateway o a la suscripción subyacente.
+- No uses este software para ningún propósito ilegal, incluido el acceso no autorizado a sistemas informáticos o la obtención de datos a los que no tienes derecho.
+
+### Sin Garantía
+
+Este software se proporciona "tal cual", sin garantía de ningún tipo. Los autores y colaboradores no son responsables de ningún daño, suspensión de cuentas, pérdida de datos u otras consecuencias derivadas del uso o mal uso de este software.
+
+### Cumplimiento Legal
+
+Eres responsable de asegurar que tu uso de este software cumpla con todas las leyes y regulaciones aplicables en tu jurisdicción, incluyendo, entre otras, las leyes de seguridad de sistemas informáticos, protección de datos y propiedad intelectual.
 
 ---
 

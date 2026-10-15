@@ -16,6 +16,8 @@ Dibuat oleh [@Jwadow](https://github.com/jwadow) • Dipelihara oleh [@Echoxiawa
 
 [Model](#-model-yang-didukung) • [Fitur](#-fitur) • [Mulai Cepat](#-mulai-cepat) • [Konfigurasi](#%EF%B8%8F-konfigurasi)
 
+> ⚠️ **Hanya untuk penggunaan pribadi dengan akun Anda sendiri.** Penggunaan gateway ini dapat melanggar Ketentuan Layanan Kiro — lihat [Penafian](#%EF%B8%8F-penafian) sebelum digunakan.
+
 </div>
 
 ---
@@ -286,6 +288,8 @@ Jika Anda perlu mengekstrak refresh token secara manual (misalnya, untuk debuggi
 ## 🔀 Sistem Akun (Lanjutan)
 
 Sistem Akun adalah cara untuk mengelola beberapa akun Kiro dengan perpindahan otomatis saat terjadi kegagalan. Di masa depan, sistem ini akan menggantikan file `.env` untuk konfigurasi kredensial, tetapi saat ini bersifat opsional dan ditujukan bagi mereka yang ingin menggunakan beberapa akun.
+
+> ⚠️ Semua akun yang dikonfigurasi di sini harus **dimiliki oleh Anda**. Mengumpulkan akun milik orang lain atau menjual ulang akses melalui beberapa akun dapat melanggar Ketentuan Layanan Kiro dan hukum yang berlaku. Gunakan secara bertanggung jawab dan dengan risiko Anda sendiri.
 
 ### Mengapa Anda Membutuhkannya
 
@@ -854,7 +858,31 @@ Dengan mengirimkan kontribusi ke proyek ini, Anda menyetujui ketentuan [Perjanji
 
 ## ⚠️ Penafian
 
-Proyek ini tidak berafiliasi dengan, didukung oleh, atau disponsori oleh Amazon Web Services (AWS), Anthropic, atau Kiro IDE. Gunakan dengan risiko Anda sendiri dan sesuai dengan ketentuan layanan API yang mendasarinya.
+**Silakan baca ini dengan cermat sebelum menggunakan proyek ini.**
+
+### Sifat Proyek Ini
+
+Proyek ini adalah proxy konversi format API untuk penggunaan pribadi. Ini mengonversi antara format API yang kompatibel dengan OpenAI/Anthropic dan Kiro API (Amazon Q Developer / AWS CodeWhisperer), memungkinkan Anda mengakses **langganan Kiro Anda sendiri** dari alat yang Anda sukai. Proyek ini tidak berafiliasi dengan, didukung oleh, atau disponsori oleh Amazon Web Services (AWS), Anthropic, atau Kiro.
+
+### Ketentuan Layanan
+
+- Menggunakan gateway ini dapat melanggar Ketentuan Layanan Kiro / AWS. Anda bertanggung jawab sepenuhnya untuk meninjau dan mematuhi ketentuan tersebut.
+- Tindakan yang dapat melanggar ToS meliputi: penyamaran sebagai klien tidak resmi, berbagi langganan dengan orang lain, mengumpulkan akun yang bukan milik Anda, atau menjual ulang akses.
+- Konsekuensi dari pelanggaran ToS diselesaikan antara Anda dan penyedia layanan, dan dapat mencakup penangguhan atau penghentian akun. Pengelola proyek tidak bertanggung jawab atas tindakan apa pun terhadap akun.
+
+### Penggunaan yang Diizinkan
+
+- Gunakan hanya kredensial (token) dari akun yang **Anda miliki**.
+- Gunakan untuk tujuan pribadi. Jangan mendistribusikan, menjual ulang, atau mengkomersialkan akses ke gateway ini atau langganan yang mendasarinya.
+- Jangan gunakan perangkat lunak ini untuk tujuan yang melanggar hukum, termasuk akses tidak sah ke sistem komputer atau memperoleh data yang tidak berhak Anda peroleh.
+
+### Tanpa Jaminan
+
+Perangkat lunak ini disediakan "sebagaimana adanya", tanpa jaminan dalam bentuk apa pun. Penulis dan kontributor tidak bertanggung jawab atas kerusakan apa pun, penangguhan akun, kehilangan data, atau konsekuensi lain yang timbul dari penggunaan atau penyalahgunaan perangkat lunak ini.
+
+### Kepatuhan Hukum
+
+Anda bertanggung jawab untuk memastikan bahwa penggunaan perangkat lunak ini mematuhi semua hukum dan peraturan yang berlaku di yurisdiksi Anda, termasuk namun tidak terbatas pada hukum keamanan sistem informasi komputer, perlindungan data, dan kekayaan intelektual.
 
 ---
 
