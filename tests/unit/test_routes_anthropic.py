@@ -2526,5 +2526,148 @@ class TestCountTokensEndpoint:
         data = response.json()
         assert "input_tokens" in data
         assert data["input_tokens"] > 0
-        
+
         print("✅ max_tokens is NOT required for count_tokens")
+
+
+# =============================================================================
+# Tests for conversation cache affinity (/v1/messages)
+# =============================================================================
+
+def _capture_conversation_id(client, api_key, payload):
+    """
+    Sends a /v1/messages request and returns the conversationId the route
+    passed to the Kiro payload builder.
+
+    The payload builder is patched, so no upstream request is made; the route
+    still returns an error status, which is irrelevant here.
+    """
+    captured = {}
+
+    def _fake_build(request_data, conversation_id, profile_arn):
+        captured["conversation_id"] = conversation_id
+        return {"conversationState": {"conversationId": conversation_id}}
+
+    with patch("kiro.routes_anthropic.anthropic_to_kiro", side_effect=_fake_build):
+        client.post(
+            "/v1/messages",
+            headers={"x-api-key": api_key},
+            json=payload,
+        )
+    return captured.get("conversation_id")
+
+
+class TestMessagesConversationIdAffinity:
+    """Tests that /v1/messages reuses a stable upstream cache-affinity key."""
+
+    def test_payload_carries_client_session_id(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies the Kiro conversationId equals the client session id.
+        Purpose: This is what makes Kiro's server-side prefix cache hit.
+        """
+        print("Action: POST /v1/messages with a Claude Code style metadata.user_id...")
+        conversation_id = _capture_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "metadata": {"user_id": '{"session_id":"44a858b6-e221-4313-aeca-116d4ee8f157"}'},
+            },
+        )
+        print(f"Comparing: Expected '44a858b6-...', Got {conversation_id!r}")
+        assert conversation_id == "44a858b6-e221-4313-aeca-116d4ee8f157"
+
+    def test_payload_falls_back_to_first_message_hash(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies the hash fallback when no session identity is sent.
+        Purpose: Clients without metadata still get cache affinity.
+        """
+        print("Action: POST /v1/messages without metadata...")
+        conversation_id = _capture_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+        print(f"Comparing: Expected a 16-hex hash, Got {conversation_id!r}")
+        assert conversation_id is not None
+        assert len(conversation_id) == 16
+        assert conversation_id.isalnum()
+
+    def test_second_turn_reuses_same_id(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies two turns of one conversation share one id.
+        Purpose: A changing id would make every turn a cache miss.
+        """
+        print("Action: POST /v1/messages twice with the same session...")
+        metadata = {"user_id": '{"session_id":"sess-turn-test"}'}
+        first = _capture_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "metadata": metadata,
+            },
+        )
+        second = _capture_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1024,
+                "messages": [
+                    {"role": "user", "content": "Hello"},
+                    {"role": "assistant", "content": "Hi"},
+                    {"role": "user", "content": "More"},
+                ],
+                "metadata": metadata,
+            },
+        )
+        print(f"Comparing: {first!r} vs {second!r}")
+        assert first == second == "sess-turn-test"
+
+    def test_placeholder_metadata_does_not_become_id(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies a placeholder user_id is not used as the cache key.
+        Purpose: `test_user` would key unrelated conversations together.
+        """
+        print("Action: POST /v1/messages with metadata.user_id='test_user'...")
+        conversation_id = _capture_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "metadata": {"user_id": "test_user"},
+            },
+        )
+        print(f"Comparing: Expected a hash, not 'test_user', Got {conversation_id!r}")
+        assert conversation_id != "test_user"
+        assert len(conversation_id) == 16
+
+    def test_toggle_off_sends_random_id_per_request(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies disabling affinity restores legacy random ids.
+        Purpose: The switch must fully restore pre-change behavior.
+        """
+        print("Action: POST /v1/messages twice with CONVERSATION_CACHE_AFFINITY=false...")
+        payload = {
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "metadata": {"user_id": '{"session_id":"sess-A"}'},
+        }
+        with patch("kiro.utils.CONVERSATION_CACHE_AFFINITY", False):
+            first = _capture_conversation_id(test_client, valid_proxy_api_key, payload)
+            second = _capture_conversation_id(test_client, valid_proxy_api_key, payload)
+        print(f"Comparing: {first!r} vs {second!r}")
+        assert first != second
+        assert len(first) == 36

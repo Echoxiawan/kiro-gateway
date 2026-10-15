@@ -79,6 +79,7 @@ Originally by [@Jwadow](https://github.com/jwadow) • Maintained by [@Echoxiawa
 | 🔐 **Smart token management** | Automatic refresh before expiration |
 | 🗝️ **External API Key Management** | Create per-user keys with token quotas and expiry |
 | 💳 **Credits / Usage Query** | Check Kiro account usage limits via `/v1/credits` |
+| 💰 **Conversation Cache Affinity** | Reuses one stable `conversationId` per client session so Kiro's server-side prefix cache is hit (measured 8–10x fewer credits on follow-up turns) |
 | 🖥️ **Web Admin Console** | Browser-based management UI at `/admin` |
 
 ---
@@ -93,6 +94,8 @@ Originally by [@Jwadow](https://github.com/jwadow) • Maintained by [@Echoxiawa
 - **External API Key Management** — Create per-user `sk-gw-...` keys with optional token quotas, Credits thresholds, and expiry dates. Manage keys through the web admin console at `/admin` or via the REST API.
 - **Credits Usage Query (`/v1/credits`)** — Query Kiro account usage limits directly through the gateway. Available to any valid key; rate-limited for external keys.
 - **Web Admin Console (`/admin`)** — Browser-based management UI: create/disable/delete external keys, view usage stats, query Credits, inspect account overview, and copy ready-to-use connection instructions per key.
+- **Conversation cache affinity (8–10x cheaper follow-up turns)** — Kiro applies an implicit server-side prefix cache keyed by the `conversationId` sent upstream. The gateway previously generated a fresh random UUID on every request, so that cache never hit and every turn was billed at full price. It now derives one stable id per client session — from the client identity (Claude Code's `metadata.user_id` → `session_id`, or the OpenAI `user` field) and, when absent, from a hash of the conversation's first message. Controlled by `CONVERSATION_CACHE_AFFINITY` (default: `true`; set to `false` to restore the legacy behavior).
+  Measured against the live API with a growing conversation: legacy random ids stayed flat at `0.5943 / 0.5878 / 0.5913` credits across three turns, while the stable id produced `0.5943 / 0.5356 / 0.0715`. Note the first turn of any conversation is a cold cache and still costs full price, and the follow-up turn only becomes cheap once its prefix matches a previously sent one (typically from the third turn of a session on).
 
 ---
 

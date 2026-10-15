@@ -53,7 +53,7 @@ from kiro.model_resolver import ModelResolver
 from kiro.converters_openai import build_kiro_payload
 from kiro.streaming_openai import stream_kiro_to_openai, collect_stream_response, stream_with_first_token_retry
 from kiro.http_client import KiroHttpClient
-from kiro.utils import generate_conversation_id
+from kiro.utils import resolve_conversation_id
 from kiro.config import WEB_SEARCH_ENABLED
 from kiro.mcp_tools import handle_native_web_search
 
@@ -429,7 +429,11 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         last_error_message = None
         last_error_status = None
         tried_accounts = set()  # Track tried accounts in current failover loop
-        
+
+        # Resolve once per request (not per attempt) so every failover attempt
+        # reuses the same upstream prefix-cache affinity key.
+        conversation_id = resolve_conversation_id(request_data, request_data.messages)
+
         for attempt in range(MAX_ATTEMPTS):
             # Get next available account (excluding already tried)
             account = await account_manager.get_next_account(
@@ -459,10 +463,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             auth_manager = account.auth_manager
             model_cache = account.model_cache
             model_resolver = account.model_resolver
-            
-            # Generate conversation ID
-            conversation_id = generate_conversation_id()
-            
+
             # Build payload for Kiro
             # profileArn is required by runtime.kiro.dev for all auth types
             profile_arn_for_payload = auth_manager.profile_arn or PROFILE_ARN or ""
@@ -713,8 +714,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
     # Usage reporter for external key quota tracking (None for admin/PROXY key)
     usage_reporter = make_usage_reporter(request)
 
-    # Generate conversation ID for Kiro API (random UUID, not used for tracking)
-    conversation_id = generate_conversation_id()
+    # Conversation ID doubles as the upstream prefix-cache affinity key
+    conversation_id = resolve_conversation_id(request_data, request_data.messages)
     
     # Build payload for Kiro
     # profileArn is required by runtime.kiro.dev for all auth types

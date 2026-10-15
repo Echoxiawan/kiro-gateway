@@ -339,6 +339,28 @@ TOOL_DESCRIPTION_MAX_LENGTH: int = int(os.getenv("TOOL_DESCRIPTION_MAX_LENGTH", 
 TRUNCATION_RECOVERY: bool = os.getenv("TRUNCATION_RECOVERY", "true").lower() in ("true", "1", "yes")
 
 # ==================================================================================================
+# Conversation Cache Affinity Settings
+# ==================================================================================================
+
+# Reuse a stable conversationId across the turns of one client session.
+# Kiro applies an implicit server-side prefix cache keyed by
+# conversationState.conversationId: reusing the same id for a growing
+# conversation makes follow-up turns roughly 8-10x cheaper, whereas a fresh id
+# per request (legacy behavior) bills every turn at full price.
+#
+# The first turn of a conversation is always a cold-cache full-price call.
+#
+# When enabled, the id is the client session identity if present
+# (Anthropic metadata.user_id JSON -> session_id, or the OpenAI `user` field),
+# otherwise a SHA-256 hash of the conversation's first message.
+# When disabled, a fresh random UUID is sent on every request (legacy behavior).
+#
+# Note: the AWS-style `cachePoint` field is a no-op on this endpoint and is not used.
+#
+# Default: true (enabled)
+CONVERSATION_CACHE_AFFINITY: bool = os.getenv("CONVERSATION_CACHE_AFFINITY", "true").lower() in ("true", "1", "yes")
+
+# ==================================================================================================
 # Logging Settings
 # ==================================================================================================
 

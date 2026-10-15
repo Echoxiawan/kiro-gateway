@@ -257,7 +257,7 @@ token = await auth_manager.get_access_token()
 | `get_machine_fingerprint()` | SHA256 хеш `{hostname}-{username}-kiro-gateway` |
 | `get_kiro_headers(auth_manager, token)` | Формирование заголовков для Kiro API |
 | `generate_completion_id()` | ID в формате `chatcmpl-{uuid_hex}` |
-| `generate_conversation_id()` | UUID для разговора |
+| `resolve_conversation_id(request, messages)` | Стабильный `conversationId` для попадания в серверный кэш префикса (id сессии клиента, иначе хеш первого сообщения) |
 | `generate_tool_call_id()` | ID в формате `call_{uuid_hex[:8]}` |
 
 ### 3.6. Слой Конвертации (`kiro/converters_openai.py`)

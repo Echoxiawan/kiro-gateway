@@ -52,7 +52,7 @@ from kiro.streaming_anthropic import (
     stream_with_first_token_retry_anthropic,
 )
 from kiro.http_client import KiroHttpClient
-from kiro.utils import generate_conversation_id
+from kiro.utils import resolve_conversation_id
 from kiro.tokenizer import estimate_request_tokens
 from kiro.config import WEB_SEARCH_ENABLED
 from kiro.mcp_tools import handle_native_web_search
@@ -351,7 +351,11 @@ async def messages(
         last_error_message = None
         last_error_status = None
         tried_accounts = set()  # Track tried accounts in current failover loop
-        
+
+        # Resolve once per request (not per attempt) so every failover attempt
+        # reuses the same upstream prefix-cache affinity key.
+        conversation_id = resolve_conversation_id(request_data, request_data.messages)
+
         for attempt in range(MAX_ATTEMPTS):
             # Get next available account (excluding already tried)
             account = await account_manager.get_next_account(
@@ -396,10 +400,7 @@ async def messages(
             auth_manager = account.auth_manager
             model_cache = account.model_cache
             model_resolver = account.model_resolver
-            
-            # Generate conversation ID
-            conversation_id = generate_conversation_id()
-            
+
             # Build payload for Kiro
             # profileArn is required by runtime.kiro.dev for all auth types
             profile_arn_for_payload = auth_manager.profile_arn or PROFILE_ARN or ""
@@ -709,8 +710,8 @@ async def messages(
     # Normal Flow (Path B will be intercepted in streaming, or no web_search)
     # ==============================================================================
     
-    # Generate conversation ID for Kiro API (random UUID, not used for tracking)
-    conversation_id = generate_conversation_id()
+    # Conversation ID doubles as the upstream prefix-cache affinity key
+    conversation_id = resolve_conversation_id(request_data, request_data.messages)
     
     # Build payload for Kiro
     # profileArn is required by runtime.kiro.dev for all auth types

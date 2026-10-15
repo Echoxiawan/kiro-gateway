@@ -47,7 +47,7 @@ from kiro.streaming_responses import (
     collect_responses_response,
 )
 from kiro.http_client import KiroHttpClient
-from kiro.utils import generate_conversation_id
+from kiro.utils import resolve_conversation_id
 
 # Reuse the OpenAI endpoint's API-key verification (same Bearer scheme)
 from kiro.routes_openai import verify_api_key, make_usage_reporter
@@ -222,6 +222,11 @@ async def responses(request: Request, request_data: ResponsesRequest):
         last_error_status = None
         tried_accounts = set()
 
+        # Resolve once per request (not per attempt) so every failover attempt
+        # reuses the same upstream prefix-cache affinity key.
+        # Responses has no `messages` field - its input is `input`.
+        conversation_id = resolve_conversation_id(request_data, request_data.input)
+
         for attempt in range(MAX_ATTEMPTS):
             account = await account_manager.get_next_account(
                 request_data.model, exclude_accounts=tried_accounts
@@ -243,7 +248,6 @@ async def responses(request: Request, request_data: ResponsesRequest):
             auth_manager = account.auth_manager
             model_cache = account.model_cache
 
-            conversation_id = generate_conversation_id()
             profile_arn_for_payload = auth_manager.profile_arn or PROFILE_ARN or ""
 
             try:
@@ -384,7 +388,9 @@ async def responses(request: Request, request_data: ResponsesRequest):
     auth_manager = account.auth_manager
     model_cache = account.model_cache
 
-    conversation_id = generate_conversation_id()
+    # Conversation ID doubles as the upstream prefix-cache affinity key.
+    # Responses has no `messages` field - its input is `input`.
+    conversation_id = resolve_conversation_id(request_data, request_data.input)
     profile_arn_for_payload = auth_manager.profile_arn or PROFILE_ARN or ""
 
     try:

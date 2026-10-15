@@ -79,6 +79,7 @@ Autor original [@Jwadow](https://github.com/jwadow) • Mantenido por [@Echoxiaw
 | 🔐 **Gestión inteligente de tokens** | Actualización automática antes de la expiración |
 | 🗝️ **Gestión de API Keys Externas** | Crea keys con cuotas para tus propios dispositivos y herramientas |
 | 💳 **Consulta de Credits / Uso** | Consulta los límites de uso de Kiro mediante `/v1/credits` |
+| 💰 **Afinidad de caché de conversación** | Reutiliza un mismo `conversationId` por sesión de cliente para acertar en la caché de prefijo del servidor de Kiro (medido: ~8-10x menos Credits en los turnos siguientes) |
 | 🖥️ **Consola Web de Administración** | Interfaz de gestión en el navegador en `/admin` |
 
 ---
@@ -93,6 +94,7 @@ Autor original [@Jwadow](https://github.com/jwadow) • Mantenido por [@Echoxiaw
 - **Gestión de API Keys Externas** — Crea keys `sk-gw-...` con cuotas de tokens opcionales, umbrales de Credits y fechas de expiración. Gestión a través de la consola web `/admin` o la API REST.
 - **Consulta de Credits (`/v1/credits`)** — Consulta los límites de uso de Kiro directamente a través del gateway. Disponible para cualquier key válida; con límite de tasa para keys externas.
 - **Consola Web de Administración (`/admin`)** — Interfaz en el navegador: crear/deshabilitar/eliminar keys externas, ver estadísticas de uso, consultar Credits, inspeccionar el resumen de cuentas y copiar instrucciones de conexión por key.
+- **Afinidad de caché de conversación (turnos siguientes ~8-10x más baratos)** — Kiro aplica una caché de prefijo implícita en el servidor, indexada por el `conversationId` enviado. Antes el gateway generaba un UUID aleatorio en cada solicitud, así que la caché nunca acertaba y cada turno se facturaba a precio completo. Ahora deriva un id estable por sesión de cliente: primero la identidad del cliente (`metadata.user_id` → `session_id` en Claude Code, o el campo `user` de OpenAI), y si no existe, un hash del primer mensaje de la conversación. Se controla con `CONVERSATION_CACHE_AFFINITY` (por defecto `true`; `false` restaura el comportamiento anterior). Medido en una conversación en crecimiento: con ids aleatorios `0.5943 / 0.5878 / 0.5913`, con id estable `0.5943 / 0.5356 / 0.0715`. Ten en cuenta que el primer turno de cualquier conversación siempre es caché fría y cuesta precio completo, y el turno siguiente solo se abarata cuando su prefijo coincide con uno enviado antes (normalmente a partir del tercer turno de la sesión).
 
 > ⚠️ Las keys externas están destinadas a usarse con **tu propia cuenta de Kiro** en tus propios dispositivos y herramientas. Compartir tu suscripción de Kiro con otros o revender el acceso puede violar los Términos de Servicio de Kiro y resultar en la suspensión de la cuenta.
 

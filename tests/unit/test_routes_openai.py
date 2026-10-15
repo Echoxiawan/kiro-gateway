@@ -2005,3 +2005,99 @@ class TestChatCompletionsLegacyMode:
         
         assert failover_enabled is False
         print("✅ Legacy mode correctly skips failover loop")
+
+
+# =============================================================================
+# Tests for conversation cache affinity (/v1/chat/completions)
+# =============================================================================
+
+def _capture_chat_conversation_id(client, api_key, payload):
+    """
+    Sends a /v1/chat/completions request and returns the conversationId the
+    route passed to the Kiro payload builder. The builder is patched, so no
+    upstream request is made.
+    """
+    captured = {}
+
+    def _fake_build(request_data, conversation_id, profile_arn):
+        captured["conversation_id"] = conversation_id
+        return {"conversationState": {"conversationId": conversation_id}}
+
+    with patch("kiro.routes_openai.build_kiro_payload", side_effect=_fake_build):
+        client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+        )
+    return captured.get("conversation_id")
+
+
+class TestChatCompletionsConversationIdAffinity:
+    """Tests that /v1/chat/completions reuses a stable upstream cache-affinity key."""
+
+    def test_payload_carries_user_field(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies the OpenAI `user` field becomes the Kiro conversationId.
+        Purpose: OpenAI-compatible clients identify sessions through `user`.
+        """
+        print("Action: POST /v1/chat/completions with user='sess-openai'...")
+        conversation_id = _capture_chat_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "user": "sess-openai",
+            },
+        )
+        print(f"Comparing: Expected 'sess-openai', Got {conversation_id!r}")
+        assert conversation_id == "sess-openai"
+
+    def test_payload_falls_back_to_first_message_hash(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies the hash fallback when no user field is sent.
+        Purpose: Clients without an identity still get cache affinity.
+        """
+        print("Action: POST /v1/chat/completions without user...")
+        conversation_id = _capture_chat_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+        print(f"Comparing: Expected a 16-char hash, Got {conversation_id!r}")
+        assert conversation_id is not None
+        assert len(conversation_id) == 16
+
+    def test_second_turn_reuses_same_id(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies two turns of one conversation share one id.
+        Purpose: A changing id would make every turn a cache miss.
+        """
+        print("Action: POST /v1/chat/completions twice with the same user...")
+        first = _capture_chat_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "user": "sess-turn-test",
+            },
+        )
+        second = _capture_chat_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "messages": [
+                    {"role": "user", "content": "Hello"},
+                    {"role": "assistant", "content": "Hi"},
+                    {"role": "user", "content": "More"},
+                ],
+                "user": "sess-turn-test",
+            },
+        )
+        print(f"Comparing: {first!r} vs {second!r}")
+        assert first == second == "sess-turn-test"

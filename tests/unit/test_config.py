@@ -969,3 +969,57 @@ class TestAccountSystemConfig:
         
         print(f"Comparing STATE_SAVE_INTERVAL_SECONDS: Expected 10, Got {config_module.STATE_SAVE_INTERVAL_SECONDS}")
         assert config_module.STATE_SAVE_INTERVAL_SECONDS == 10
+
+
+class TestConversationCacheAffinityConfig:
+    """Tests for CONVERSATION_CACHE_AFFINITY configuration."""
+
+    def test_default_is_enabled(self, monkeypatch):
+        """
+        What it does: Verifies CONVERSATION_CACHE_AFFINITY defaults to True.
+        Purpose: The upstream cache reuse must work out of the box.
+        """
+        print("Setup: Removing CONVERSATION_CACHE_AFFINITY from environment...")
+        monkeypatch.delenv("CONVERSATION_CACHE_AFFINITY", raising=False)
+
+        print("Action: Reloading config module...")
+        from importlib import reload
+        import kiro.config as config_module
+        reload(config_module)
+
+        print(f"Comparing: Expected True, Got {config_module.CONVERSATION_CACHE_AFFINITY}")
+        assert config_module.CONVERSATION_CACHE_AFFINITY is True
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE", "Yes"])
+    def test_enabling_values(self, monkeypatch, value):
+        """
+        What it does: Verifies truthy env values enable the feature.
+        Purpose: Match the parsing convention used by every other flag.
+        """
+        print(f"Setup: Setting CONVERSATION_CACHE_AFFINITY={value}...")
+        monkeypatch.setenv("CONVERSATION_CACHE_AFFINITY", value)
+
+        print("Action: Reloading config module...")
+        from importlib import reload
+        import kiro.config as config_module
+        reload(config_module)
+
+        print(f"Comparing: Expected True, Got {config_module.CONVERSATION_CACHE_AFFINITY}")
+        assert config_module.CONVERSATION_CACHE_AFFINITY is True
+
+    @pytest.mark.parametrize("value", ["false", "0", "no", "FALSE", "off"])
+    def test_disabling_values(self, monkeypatch, value):
+        """
+        What it does: Verifies falsy env values disable the feature.
+        Purpose: Users must be able to restore the legacy random-UUID behavior.
+        """
+        print(f"Setup: Setting CONVERSATION_CACHE_AFFINITY={value}...")
+        monkeypatch.setenv("CONVERSATION_CACHE_AFFINITY", value)
+
+        print("Action: Reloading config module...")
+        from importlib import reload
+        import kiro.config as config_module
+        reload(config_module)
+
+        print(f"Comparing: Expected False, Got {config_module.CONVERSATION_CACHE_AFFINITY}")
+        assert config_module.CONVERSATION_CACHE_AFFINITY is False
