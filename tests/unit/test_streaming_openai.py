@@ -1331,14 +1331,15 @@ class TestStreamingOpenaiMeteringData:
         Goal: Verify metering data is included.
         """
         print("Setup: Mock stream with metering data...")
-        
+
         async def mock_parse_kiro_stream(*args, **kwargs):
             yield KiroEvent(type="content", content="Hello")
-            yield KiroEvent(type="usage", usage={"credits": 0.001})
-        
+            # Real upstream metering carries the credit amount as a number.
+            yield KiroEvent(type="usage", usage=0.001)
+
         print("Action: Streaming to OpenAI format...")
         chunks = []
-        
+
         with patch('kiro.streaming_openai.parse_kiro_stream', mock_parse_kiro_stream):
             with patch('kiro.streaming_openai.parse_bracket_tool_calls', return_value=[]):
                 async for chunk in stream_kiro_to_openai(
@@ -1346,12 +1347,12 @@ class TestStreamingOpenaiMeteringData:
                     mock_model_cache, mock_auth_manager
                 ):
                     chunks.append(chunk)
-        
+
         print(f"Received {len(chunks)} chunks")
-        
+
         # Final chunk should have credits_used
         final_chunk = chunks[-2]  # Before [DONE]
-        assert '"credits_used"' in final_chunk
+        assert '"credits_used": 0.001' in final_chunk
         print("✓ credits_used included in usage")
 
 

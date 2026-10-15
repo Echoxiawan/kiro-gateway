@@ -47,6 +47,8 @@ from kiro.streaming_core import (
     FirstTokenTimeoutError,
     KiroEvent,
     calculate_tokens_from_context_usage,
+    extract_credits_used,
+    log_usage_summary,
     stream_with_first_token_retry,
 )
 from kiro.tokenizer import count_tokens, estimate_request_tokens
@@ -202,6 +204,7 @@ async def stream_kiro_to_anthropic(
     # Track context usage for token calculation
     context_usage_percentage: Optional[float] = None
     upstream_cache_usage: Dict[str, int] = {}
+    credits_used: Optional[float] = None
     
     # Track truncated tool calls for recovery
     truncated_tools: List[Dict[str, Any]] = []
@@ -527,6 +530,9 @@ async def stream_kiro_to_anthropic(
             elif event.type == "context_usage" and event.context_usage_percentage is not None:
                 context_usage_percentage = event.context_usage_percentage
             elif event.type == "usage" and event.usage:
+                # Kiro's metering event carries the credit amount. Cache token
+                # counters are forwarded only when upstream actually sends them.
+                credits_used = extract_credits_used(event.usage)
                 upstream_cache_usage.update(_extract_cache_usage_fields(event.usage))
             elif event.type == "metadata" and event.refusal:
                 refusal_text = event.refusal
@@ -669,6 +675,13 @@ async def stream_kiro_to_anthropic(
             "output_tokens": output_tokens
         }
         usage_payload.update(upstream_cache_usage)
+        if credits_used is not None:
+            usage_payload["credits_used"] = credits_used
+        log_usage_summary(
+            model, model_cache, input_tokens, output_tokens, input_tokens + output_tokens,
+            credits_used=credits_used,
+            cache_read_tokens=upstream_cache_usage.get("cache_read_input_tokens"),
+        )
 
         # Notify usage subscriber (external key quota tracking)
         if on_usage is not None:
@@ -890,6 +903,15 @@ async def collect_anthropic_response(
         "output_tokens": output_tokens
     }
     usage_payload.update(upstream_cache_usage)
+
+    collected_credits = extract_credits_used(result.usage)
+    if collected_credits is not None:
+        usage_payload["credits_used"] = collected_credits
+    log_usage_summary(
+        model, model_cache, input_tokens, output_tokens, input_tokens + output_tokens,
+        credits_used=collected_credits,
+        cache_read_tokens=upstream_cache_usage.get("cache_read_input_tokens"),
+    )
 
     # Notify usage subscriber (external key quota tracking)
     if on_usage is not None:

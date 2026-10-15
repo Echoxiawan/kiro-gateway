@@ -13,6 +13,7 @@ that id:
 - the CONVERSATION_CACHE_AFFINITY toggle restores the legacy random-UUID behavior
 """
 
+import json
 import re
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -22,9 +23,9 @@ import pytest
 import kiro.utils as utils
 
 
-def _request(metadata=None, user=None, messages=None, input_value=None):
+def _request(metadata=None, user=None, messages=None, input_value=None, **extra):
     """Builds a minimal stand-in for any of the three request models."""
-    attrs = {"metadata": metadata, "user": user}
+    attrs = {"metadata": metadata, "user": user, **extra}
     if messages is not None:
         attrs["messages"] = messages
     if input_value is not None:
@@ -100,6 +101,115 @@ class TestResolveConversationIdClientSessionId:
         result = utils.resolve_conversation_id(_request(metadata={"user_id": "abc-123"}, messages=[_user_msg()]))
         print(f"Comparing: Expected 'abc-123', Got {result!r}")
         assert result == "abc-123"
+
+    def test_codex_prompt_cache_key_has_highest_priority(self):
+        """
+        What it does: Uses Codex's explicit prompt_cache_key before other fields.
+        Purpose: Codex supplies this exact session cache-affinity identity.
+        """
+        print("Action: resolve a Codex request with all identity sources...")
+        request = _request(
+            metadata={"session_id": "metadata-session"},
+            user="openai-user",
+            messages=[_user_msg()],
+            prompt_cache_key="codex-prompt-cache-key",
+            client_metadata={"session_id": "codex-session", "thread_id": "codex-thread"},
+        )
+        result = utils.resolve_conversation_id(request)
+        print(f"Comparing: Expected 'codex-prompt-cache-key', Got {result!r}")
+        assert result == "codex-prompt-cache-key"
+
+    def test_codex_client_metadata_session_id_fallback(self):
+        """
+        What it does: Uses Codex client_metadata.session_id without a prompt key.
+        Purpose: Preserve affinity when clients omit prompt_cache_key.
+        """
+        print("Action: resolve a Codex request with client_metadata.session_id...")
+        request = _request(
+            messages=[_user_msg()],
+            client_metadata={"session_id": "codex-session", "thread_id": "codex-thread"},
+        )
+        result = utils.resolve_conversation_id(request)
+        print(f"Comparing: Expected 'codex-session', Got {result!r}")
+        assert result == "codex-session"
+
+    def test_codex_client_metadata_thread_id_fallback(self):
+        """
+        What it does: Uses Codex client_metadata.thread_id when session_id is absent.
+        Purpose: Keep a stable final client-identity fallback for Codex.
+        """
+        print("Action: resolve a Codex request with client_metadata.thread_id...")
+        request = _request(messages=[_user_msg()], client_metadata={"thread_id": "codex-thread"})
+        result = utils.resolve_conversation_id(request)
+        print(f"Comparing: Expected 'codex-thread', Got {result!r}")
+        assert result == "codex-thread"
+
+    def test_codex_source_labels_do_not_include_raw_identity(self):
+        """
+        What it does: Returns a safe source label separately from the raw id.
+        Purpose: Routes can log observability data without leaking session keys.
+        """
+        print("Action: resolve a Codex prompt cache key with source metadata...")
+        raw_key = "codex-secret-session-key"
+        conversation_id, source = utils._resolve_conversation_id_with_source(
+            _request(messages=[_user_msg()], prompt_cache_key=raw_key)
+        )
+        print(f"Comparing: id={conversation_id!r}, source={source!r}")
+        assert conversation_id == raw_key
+        assert source == "codex_prompt_cache_key"
+        assert raw_key not in source
+
+    def test_cache_prefix_fingerprint_tracks_components(self):
+        """
+        What it does: Reports separate fingerprints for the prefix components.
+        Purpose: Makes it visible which component breaks a cache hit between turns.
+        """
+        print("Action: fingerprinting payloads that change in different places...")
+        base = {
+            "conversationState": {
+                "conversationId": "c1",
+                "currentMessage": {"userInputMessage": {
+                    "content": "q", "userInputMessageContext": {"tools": [{"name": "t"}]}}},
+                "history": [{"userInputMessage": {"content": "SYSTEM\n\nfirst"}}],
+            }
+        }
+        baseline = utils.summarize_cache_prefix(base)
+
+        grown = json.loads(json.dumps(base))
+        grown["conversationState"]["history"].append({"assistantResponseMessage": {"content": "a"}})
+        grown_summary = utils.summarize_cache_prefix(grown)
+        print(f"Comparing: baseline={baseline!r}")
+        print(f"            grown={grown_summary!r}")
+        # Growing the conversation must not disturb the cached prefix.
+        assert "head=" + baseline.split("head=")[1].split(",")[0] in grown_summary
+        assert "history_len=2" in grown_summary
+
+        changed_head = json.loads(json.dumps(base))
+        changed_head["conversationState"]["history"][0]["userInputMessage"]["content"] = "CHANGED SYSTEM"
+        head_summary = utils.summarize_cache_prefix(changed_head)
+        print(f"            head changed={head_summary!r}")
+        assert baseline.split("head=")[1].split(",")[0] != head_summary.split("head=")[1].split(",")[0]
+
+        changed_tools = json.loads(json.dumps(base))
+        changed_tools["conversationState"]["currentMessage"]["userInputMessage"][
+            "userInputMessageContext"]["tools"] = [{"name": "other"}]
+        tools_summary = utils.summarize_cache_prefix(changed_tools)
+        print(f"            tools changed={tools_summary!r}")
+        assert baseline.split("tools=")[1].split(",")[0] != tools_summary.split("tools=")[1].split(",")[0]
+
+    def test_conversation_diagnostic_id_is_non_reversible(self):
+        """
+        What it does: Converts a sensitive affinity key into a short diagnostic id.
+        Purpose: Error responses need correlation without exposing client session ids.
+        """
+        print("Action: hashing a sensitive conversation affinity key...")
+        raw_key = "codex-secret-session-key"
+        diagnostic_id = utils.conversation_diagnostic_id(raw_key)
+        print(f"Comparing: diagnostic id={diagnostic_id!r}")
+        assert diagnostic_id.startswith("conv_")
+        assert raw_key not in diagnostic_id
+        assert len(diagnostic_id) == 17
+        assert diagnostic_id == utils.conversation_diagnostic_id(raw_key)
 
 
 class TestResolveConversationIdClientSessionIdEdgeCases:
@@ -314,6 +424,64 @@ class TestResolveConversationIdHashFallback:
         print(f"Comparing: {result!r}")
         assert result == utils._hash_first_message(items)
         assert re.fullmatch(r"[0-9a-f]{16}", result)
+
+    def test_codex_additional_tools_is_skipped_for_hash_fallback(self):
+        """
+        What it does: Skips Codex additional_tools before the first real message.
+        Purpose: Tool definitions have no conversational text and cannot anchor a session.
+        """
+        print("Action: resolving a Codex item list starting with additional_tools...")
+        items = [
+            {"type": "additional_tools", "role": "developer", "tools": [{"name": "exec"}]},
+            {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Project rules"}]},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Hello"}]},
+        ]
+        expected = utils._hash_first_message(items[1:])
+        result = utils.resolve_conversation_id(_request(input_value=items))
+        print(f"Comparing: Expected {expected!r}, Got {result!r}")
+        assert result == expected
+
+    def test_codex_same_tools_different_first_message_has_different_hash(self):
+        """
+        What it does: Distinguishes Codex sessions after identical additional_tools items.
+        Purpose: Prevent all Codex conversations from collapsing onto an empty hash.
+        """
+        print("Action: resolving two Codex inputs with shared tool definitions...")
+        tools = {"type": "additional_tools", "role": "developer", "tools": [{"name": "exec"}]}
+        first = utils.resolve_conversation_id(_request(input_value=[tools, {"type": "message", "role": "user", "content": "Alpha"}]))
+        second = utils.resolve_conversation_id(_request(input_value=[tools, {"type": "message", "role": "user", "content": "Beta"}]))
+        print(f"Comparing: {first!r} vs {second!r}")
+        assert first != second
+        assert re.fullmatch(r"[0-9a-f]{16}", first)
+        assert re.fullmatch(r"[0-9a-f]{16}", second)
+
+    def test_only_codex_metadata_items_return_random_uuid(self):
+        """
+        What it does: Returns a random id when no meaningful message exists.
+        Purpose: Never hash an empty additional_tools item into a shared key.
+        """
+        print("Action: resolving a Codex input containing only metadata/tool items...")
+        items = [
+            {"type": "additional_tools", "role": "developer", "tools": [{"name": "exec"}]},
+            {"type": "reasoning", "summary": []},
+            {"type": "custom_tool_call", "name": "exec", "input": "ls"},
+        ]
+        first = utils.resolve_conversation_id(_request(input_value=items))
+        second = utils.resolve_conversation_id(_request(input_value=items))
+        print(f"Comparing: random UUIDs {first!r} vs {second!r}")
+        assert first != second
+        assert len(first) == 36
+
+    def test_non_dict_codex_client_metadata_falls_back(self):
+        """
+        What it does: Ignores malformed non-dict client_metadata.
+        Purpose: Extra fields from a client must never crash the gateway.
+        """
+        print("Action: resolving with malformed Codex client_metadata...")
+        messages = [_user_msg("fallback")]
+        result = utils.resolve_conversation_id(_request(messages=messages, client_metadata="not-a-dict"))
+        print(f"Comparing: Expected hash, Got {result!r}")
+        assert result == utils._hash_first_message(messages)
 
     @pytest.mark.parametrize("messages", [None, [], ""])
     def test_no_usable_messages_returns_random_uuid(self, messages):

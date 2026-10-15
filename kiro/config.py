@@ -351,8 +351,9 @@ TRUNCATION_RECOVERY: bool = os.getenv("TRUNCATION_RECOVERY", "true").lower() in 
 # The first turn of a conversation is always a cold-cache full-price call.
 #
 # When enabled, the id is the client session identity if present
-# (Anthropic metadata.user_id JSON -> session_id, or the OpenAI `user` field),
-# otherwise a SHA-256 hash of the conversation's first message.
+# (Codex prompt_cache_key/client_metadata.session_id, Anthropic metadata.user_id
+# JSON -> session_id, or the OpenAI `user` field), otherwise a SHA-256 hash of
+# the first meaningful conversation message.
 # When disabled, a fresh random UUID is sent on every request (legacy behavior).
 #
 # Note: the AWS-style `cachePoint` field is a no-op on this endpoint and is not used.
@@ -400,7 +401,7 @@ FIRST_TOKEN_MAX_RETRIES: int = int(os.getenv("FIRST_TOKEN_MAX_RETRIES", "3"))
 # Debug logging mode:
 # - off: disabled (default)
 # - errors: save logs only for failed requests (4xx, 5xx)
-# - all: save logs for every request (overwrites on each request)
+# - all: save logs for every request and retain per-request archives
 _DEBUG_MODE_RAW: str = os.getenv("DEBUG_MODE", "").lower()
 
 if _DEBUG_MODE_RAW in ("off", "errors", "all"):
@@ -410,6 +411,12 @@ else:
 
 # Directory for debug log files
 DEBUG_DIR: str = os.getenv("DEBUG_DIR", "debug_logs")
+
+# How many per-request debug archives to keep under <DEBUG_DIR>/requests.
+# Every request gets its own timestamped directory so conversations no longer
+# overwrite each other. Set to 0 to keep everything (no automatic cleanup).
+# Default: 50
+DEBUG_KEEP_REQUESTS: int = int(os.getenv("DEBUG_KEEP_REQUESTS", "50"))
 
 
 def _warn_timeout_configuration():

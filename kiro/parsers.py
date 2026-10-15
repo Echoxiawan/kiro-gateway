@@ -254,6 +254,12 @@ class AwsEventStreamParser:
         ('{"input":', 'tool_input'),
         ('{"stop":', 'tool_stop'),
         ('{"followupPrompt":', 'followup'),
+        # Kiro's meteringEvent payload is
+        #   {"unit": "credit", "unitPlural": "credits", "usage": <number>}
+        # The credit amount sits under "usage" but it is not the first key, so a
+        # '"usage":'-anchored pattern never matched real traffic and the credits
+        # were silently dropped for every streamed response.
+        ('{"unit":', 'usage'),
         ('{"usage":', 'usage'),
         ('{"contextUsagePercentage":', 'context_usage'),
         ('{"stopReason":', 'metadata'),

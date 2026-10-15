@@ -23,7 +23,12 @@ Debug logging module for requests.
 Supports three modes (DEBUG_MODE):
 - off: logging disabled
 - errors: logs are saved only on errors (4xx, 5xx)
-- all: logs are overwritten on each request
+- all: logs are saved for every request and retained per request
+
+In "all" mode each request writes to <DEBUG_DIR>/requests/<timestamp>/ so a new
+request never overwrites the previous one; the most recent request is also
+mirrored into <DEBUG_DIR> itself for convenience. DEBUG_KEEP_REQUESTS bounds how
+many archives are kept.
 
 In "errors" mode, data is buffered in memory and flushed to files
 only when flush_on_error() is called.
@@ -35,11 +40,12 @@ them to app_logs.txt file for debugging convenience.
 import io
 import json
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from loguru import logger
 
-from kiro.config import DEBUG_MODE, DEBUG_DIR
+from kiro.config import DEBUG_DIR, DEBUG_KEEP_REQUESTS, DEBUG_MODE
 
 
 class DebugLogger:
@@ -51,6 +57,18 @@ class DebugLogger:
     - errors: buffers data, flushes to files only on errors
     - all: writes data immediately to files (as before)
     """
+
+    # Files that make up one request's debug snapshot. Used both when archiving
+    # the previous request and when resetting the live directory.
+    REQUEST_FILES = (
+        "request_body.json",
+        "kiro_request_body.json",
+        "response_stream_raw.txt",
+        "response_stream_modified.txt",
+        "app_logs.txt",
+        "error_info.json",
+    )
+
     _instance = None
 
     def __new__(cls):
@@ -129,29 +147,70 @@ class DebugLogger:
     def prepare_new_request(self):
         """
         Prepares the logger for a new request.
-        
-        In "all" mode: clears the logs folder.
+
+        In "all" mode: archives the previous request into
+        <DEBUG_DIR>/requests/<timestamp>/ and resets the live directory, so a new
+        request never destroys an earlier conversation's logs.
         In "errors" mode: clears buffers.
         In both modes: sets up application log capture.
         """
         if not self._is_enabled():
             return
-        
+
         # Clear buffers in any case
         self._clear_buffers()
-        
+
         # Set up application log capture
         self._setup_app_logs_capture()
 
         if self._is_immediate_write():
-            # "all" mode - clear folder and recreate
             try:
-                if self.debug_dir.exists():
-                    shutil.rmtree(self.debug_dir)
                 self.debug_dir.mkdir(parents=True, exist_ok=True)
-                logger.debug(f"[DebugLogger] Directory {self.debug_dir} cleared for new request.")
+                self._archive_previous_request()
+                self._prune_archives()
             except Exception as e:
                 logger.error(f"[DebugLogger] Error preparing directory: {e}")
+
+    def _archive_previous_request(self):
+        """
+        Moves the previous request's files into <DEBUG_DIR>/requests/<stamp>/.
+
+        Keeps <DEBUG_DIR> as the "latest request" view while preserving history,
+        so opening the same path always shows the newest run.
+        """
+        existing = [name for name in self.REQUEST_FILES if (self.debug_dir / name).exists()]
+        if not existing:
+            return
+
+        newest_mtime = max((self.debug_dir / name).stat().st_mtime for name in existing)
+        stamp = datetime.fromtimestamp(newest_mtime, tz=timezone.utc).strftime("%Y%m%dT%H%M%S.%f")
+
+        archive_dir = self.debug_dir / "requests" / stamp
+        suffix = 1
+        while archive_dir.exists():
+            archive_dir = self.debug_dir / "requests" / f"{stamp}-{suffix}"
+            suffix += 1
+
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            for name in existing:
+                shutil.move(str(self.debug_dir / name), str(archive_dir / name))
+            logger.debug(f"[DebugLogger] Archived previous request to {archive_dir}")
+        except Exception as e:
+            logger.error(f"[DebugLogger] Error archiving previous request: {e}")
+
+    def _prune_archives(self):
+        """Removes the oldest archives beyond DEBUG_KEEP_REQUESTS (0 keeps all)."""
+        if DEBUG_KEEP_REQUESTS <= 0:
+            return
+
+        requests_dir = self.debug_dir / "requests"
+        if not requests_dir.is_dir():
+            return
+
+        archives = sorted((d for d in requests_dir.iterdir() if d.is_dir()), key=lambda d: d.name)
+        for old_archive in archives[:-DEBUG_KEEP_REQUESTS]:
+            shutil.rmtree(old_archive, ignore_errors=True)
 
     def log_request_body(self, body: bytes):
         """
@@ -279,11 +338,14 @@ class DebugLogger:
             return
         
         try:
-            # Create directory if not exists
-            if self.debug_dir.exists():
-                shutil.rmtree(self.debug_dir)
+            # Create directory if not exists. Only the live files are removed -
+            # deleting the whole tree would also drop archived requests.
             self.debug_dir.mkdir(parents=True, exist_ok=True)
-            
+            for name in self.REQUEST_FILES:
+                leftover = self.debug_dir / name
+                if leftover.exists():
+                    leftover.unlink()
+
             # Flush buffers to files
             if self._request_body_buffer:
                 self._write_request_body_to_file(self._request_body_buffer)

@@ -527,7 +527,23 @@ class TestAwsEventStreamParserFeed:
         assert len(events) == 1
         assert events[0]["type"] == "usage"
         assert events[0]["data"] == 1.5
-    
+
+    def test_parses_real_metering_event(self, aws_event_parser):
+        """
+        What it does: Parses the meteringEvent payload Kiro actually streams.
+        Goal: Credits must not be silently dropped because "usage" is not key #1.
+        """
+        print("Setup: Chunk with the real metering payload...")
+        chunk = b'{"unit":"credit","unitPlural":"credits","usage":8.204963343880596}'
+
+        print("Action: Parsing chunk...")
+        events = aws_event_parser.feed(chunk)
+
+        print(f"Result: {events}")
+        assert len(events) == 1
+        assert events[0]["type"] == "usage"
+        assert events[0]["data"] == 8.204963343880596
+
     def test_parses_context_usage_event(self, aws_event_parser):
         """
         What it does: Tests parsing of context_usage event.

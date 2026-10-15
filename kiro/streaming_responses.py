@@ -56,6 +56,8 @@ from kiro.streaming_core import (
     parse_kiro_stream,
     FirstTokenTimeoutError,
     calculate_tokens_from_context_usage,
+    extract_credits_used,
+    log_usage_summary,
     stream_with_first_token_retry as stream_with_first_token_retry_core,
 )
 
@@ -75,6 +77,39 @@ __all__ = [
     "stream_responses_with_first_token_retry",
     "collect_responses_response",
 ]
+
+
+def _extract_responses_cache_usage(usage: Any) -> Dict[str, Dict[str, int]]:
+    """
+    Maps explicitly returned Kiro cache counters to Responses usage details.
+
+    Kiro commonly returns a numeric metering credit value in ``usage``. In that
+    case there is no token-level cache evidence and this returns an empty dict.
+    Counters are only exposed when the upstream event contains the corresponding
+    fields, so estimated prompt tokens are never mislabeled as cached tokens.
+
+    Args:
+        usage: Raw Kiro usage/metering payload
+
+    Returns:
+        A Responses ``input_tokens_details`` object, or an empty dict
+    """
+    if not isinstance(usage, dict):
+        return {}
+
+    details: Dict[str, int] = {}
+    for key in ("cacheReadInputTokens", "cache_read_input_tokens"):
+        value = usage.get(key)
+        if isinstance(value, (int, float)) and value >= 0:
+            details["cached_tokens"] = int(value)
+            break
+    for key in ("cacheWriteInputTokens", "cache_write_input_tokens"):
+        value = usage.get(key)
+        if isinstance(value, (int, float)) and value >= 0:
+            details["cache_write_tokens"] = int(value)
+            break
+
+    return {"input_tokens_details": details} if details else {}
 
 
 def _new_response_id() -> str:
@@ -538,10 +573,20 @@ async def stream_kiro_to_responses_internal(
             "output_tokens": completion_tokens,
             "total_tokens": total_tokens,
         }
+        usage.update(_extract_responses_cache_usage(metering_data))
+
+        credits_used = extract_credits_used(metering_data)
+        if credits_used is not None:
+            usage["credits_used"] = credits_used
 
         logger.debug(
-            f"[Usage] {model}: input_tokens={prompt_tokens} ({prompt_source}), "
-            f"output_tokens={completion_tokens} (tiktoken), total_tokens={total_tokens} ({total_source})"
+            f"[UsageDetail] {model}: prompt_source={prompt_source}, total_source={total_source}, "
+            f"cache_usage={'available' if 'input_tokens_details' in usage else 'unavailable'}"
+        )
+        cache_read_tokens = usage.get("input_tokens_details", {}).get("cached_tokens")
+        log_usage_summary(
+            model, model_cache, prompt_tokens, completion_tokens, total_tokens,
+            credits_used=credits_used, cache_read_tokens=cache_read_tokens,
         )
 
         # Notify usage subscriber (external key quota tracking)
@@ -760,14 +805,27 @@ async def collect_responses_response(
             prompt_tokens += count_tools_tokens(request_tools, apply_claude_correction=False)
         total_tokens = prompt_tokens + completion_tokens
 
+    usage = {
+        "input_tokens": prompt_tokens,
+        "output_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+    usage.update(_extract_responses_cache_usage(getattr(result, "usage", None)))
+
+    credits_used = extract_credits_used(getattr(result, "usage", None))
+    if credits_used is not None:
+        usage["credits_used"] = credits_used
+
+    log_usage_summary(
+        model, model_cache, prompt_tokens, completion_tokens, total_tokens,
+        credits_used=credits_used,
+        cache_read_tokens=usage.get("input_tokens_details", {}).get("cached_tokens"),
+    )
+
     # Notify usage subscriber (external key quota tracking)
     if on_usage is not None:
         try:
-            cb_result = on_usage({
-                "input_tokens": prompt_tokens,
-                "output_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            })
+            cb_result = on_usage(usage)
             if asyncio.iscoroutine(cb_result) or hasattr(cb_result, "__await__"):
                 await cb_result
         except Exception as e:

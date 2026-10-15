@@ -52,7 +52,7 @@ from kiro.streaming_anthropic import (
     stream_with_first_token_retry_anthropic,
 )
 from kiro.http_client import KiroHttpClient
-from kiro.utils import resolve_conversation_id
+from kiro.utils import conversation_diagnostic_id, resolve_conversation_id, summarize_cache_prefix
 from kiro.tokenizer import estimate_request_tokens
 from kiro.config import WEB_SEARCH_ENABLED
 from kiro.mcp_tools import handle_native_web_search
@@ -431,6 +431,9 @@ async def messages(
                     debug_logger.log_kiro_request_body(kiro_request_body)
             except Exception as e:
                 logger.warning(f"Failed to log Kiro request: {e}")
+
+            # Cache-hit diagnosis: shows which prefix component changes per turn
+            logger.info(f"[CachePrefix] {summarize_cache_prefix(kiro_payload)}")
             
             # Create HTTP client
             url = f"{auth_manager.api_host}/generateAssistantResponse"
@@ -560,7 +563,7 @@ async def messages(
                     try:
                         error_json = json.loads(error_text)
                         from kiro.kiro_errors import enhance_kiro_error
-                        error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_id)
+                        error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_diagnostic_id(conversation_id))
                         error_reason = error_info.reason
                         last_error_message = error_info.user_message
                         last_error_status = response.status_code
@@ -743,6 +746,9 @@ async def messages(
             debug_logger.log_kiro_request_body(kiro_request_body)
     except Exception as e:
         logger.warning(f"Failed to log Kiro request: {e}")
+
+    # Cache-hit diagnosis: shows which prefix component changes per turn
+    logger.info(f"[CachePrefix] {summarize_cache_prefix(kiro_payload)}")
     
     # Create HTTP client with retry logic
     # For streaming: use per-request client to avoid CLOSE_WAIT leak on VPN disconnect (issue #54)
@@ -795,7 +801,7 @@ async def messages(
                 error_json = json.loads(error_text)
                 # Enhance Kiro API errors with user-friendly messages
                 from kiro.kiro_errors import enhance_kiro_error
-                error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_id)
+                error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_diagnostic_id(conversation_id))
                 error_message = error_info.user_message
                 # Log original error for debugging
                 logger.debug(f"Original Kiro error: {error_info.original_message} (reason: {error_info.reason})")

@@ -53,6 +53,8 @@ from kiro.streaming_core import (
     FirstTokenTimeoutError,
     KiroEvent,
     calculate_tokens_from_context_usage,
+    extract_credits_used,
+    log_usage_summary,
     stream_with_first_token_retry as stream_with_first_token_retry_core,
 )
 
@@ -433,8 +435,9 @@ async def stream_kiro_to_openai_internal(
             }
         }
         
-        if metering_data:
-            final_chunk["usage"]["credits_used"] = metering_data
+        credits_used = extract_credits_used(metering_data)
+        if credits_used is not None:
+            final_chunk["usage"]["credits_used"] = credits_used
 
         # Notify usage subscriber (external key quota tracking) before the final chunk
         if on_usage is not None:
@@ -447,10 +450,11 @@ async def stream_kiro_to_openai_internal(
 
         # Log final token values being sent to client
         logger.debug(
-            f"[Usage] {model}: "
-            f"prompt_tokens={prompt_tokens} ({prompt_source}), "
-            f"completion_tokens={completion_tokens} (tiktoken), "
-            f"total_tokens={total_tokens} ({total_source})"
+            f"[UsageDetail] {model}: prompt_source={prompt_source}, total_source={total_source}"
+        )
+        log_usage_summary(
+            model, model_cache, prompt_tokens, completion_tokens, total_tokens,
+            credits_used=credits_used,
         )
         
         yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n"

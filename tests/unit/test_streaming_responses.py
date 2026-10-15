@@ -11,6 +11,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 
 from kiro.streaming_core import KiroEvent
 from kiro import streaming_responses
@@ -117,8 +118,65 @@ class TestResponsesStreaming:
         assert "usage" in completed["response"]
         assert "input_tokens" in completed["response"]["usage"]
         assert "output_tokens" in completed["response"]["usage"]
+        assert "input_tokens_details" not in completed["response"]["usage"]
         assert completed["response"]["status"] == "completed"
         assert len(completed["response"]["output"]) == 1
+
+    async def test_completed_forwards_explicit_cache_usage(self, monkeypatch):
+        """
+        What it does: Forwards explicit Kiro cache counters to Responses usage.
+        Purpose: Never estimate cache hits, but preserve real upstream evidence.
+        """
+        events = [
+            KiroEvent(type="content", content="hi"),
+            KiroEvent(type="usage", usage={"cacheReadInputTokens": 123, "cacheWriteInputTokens": 456}),
+            KiroEvent(type="context_usage", context_usage_percentage=2.0),
+        ]
+        parsed = await _run(events, monkeypatch)
+        _, completed = [e for e in parsed if e[0] == "response.completed"][0]
+        usage = completed["response"]["usage"]
+        assert usage["input_tokens_details"] == {
+            "cached_tokens": 123,
+            "cache_write_tokens": 456,
+        }
+
+    async def test_completed_reports_credits_used(self, monkeypatch):
+        """
+        What it does: Surfaces Kiro's credit amount in Responses usage.
+        Purpose: Credits are the only real cache/billing signal Kiro returns.
+        """
+        events = [
+            KiroEvent(type="content", content="hi"),
+            KiroEvent(type="usage", usage=8.2),
+            KiroEvent(type="context_usage", context_usage_percentage=2.0),
+        ]
+        parsed = await _run(events, monkeypatch)
+        _, completed = [e for e in parsed if e[0] == "response.completed"][0]
+        usage = completed["response"]["usage"]
+        assert usage["credits_used"] == 8.2
+        assert "input_tokens_details" not in usage
+
+    async def test_credits_used_logged(self, monkeypatch):
+        """
+        What it does: Emits a [Credits] log line for the request.
+        Purpose: Operators can watch credit spend without reading the SSE stream.
+        """
+        # loguru does not propagate to the stdlib root logger, so attach a sink
+        # instead of relying on pytest's caplog.
+        messages = []
+        sink_id = logger.add(lambda message: messages.append(message.record["message"]), level="INFO")
+
+        events = [
+            KiroEvent(type="content", content="hi"),
+            KiroEvent(type="usage", usage=1.25),
+        ]
+        try:
+            await _run(events, monkeypatch)
+        finally:
+            logger.remove(sink_id)
+
+        print(f"Captured records: {messages!r}")
+        assert any("credits=1.25" in m for m in messages)
 
     async def test_reasoning_then_text(self, monkeypatch):
         """

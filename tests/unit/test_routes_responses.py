@@ -139,3 +139,91 @@ class TestResponsesConversationIdAffinity:
         print(f"Comparing: Expected a 16-char hash, Got {first!r}")
         # A random UUID would be 36 characters; the hash path is 16.
         assert len(first) == 16
+
+    def test_payload_carries_codex_prompt_cache_key(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Uses Codex prompt_cache_key as the Kiro conversationId.
+        Purpose: This is Codex's explicit stable cache-affinity identity.
+        """
+        print("Action: POST /v1/responses with Codex prompt_cache_key...")
+        conversation_id = _capture_responses_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "input": [{"type": "additional_tools", "role": "developer", "tools": []}, {"type": "message", "role": "user", "content": "Hello"}],
+                "prompt_cache_key": "codex-prompt-cache-key",
+                "client_metadata": {"session_id": "codex-session", "thread_id": "codex-thread"},
+            },
+        )
+        print(f"Comparing: Expected 'codex-prompt-cache-key', Got {conversation_id!r}")
+        assert conversation_id == "codex-prompt-cache-key"
+
+    def test_payload_carries_codex_client_metadata_session_id(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Uses client_metadata.session_id when Codex omits prompt_cache_key.
+        Purpose: Preserve cache affinity across supported Codex request variants.
+        """
+        print("Action: POST /v1/responses with Codex client_metadata.session_id...")
+        conversation_id = _capture_responses_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "input": "Hello",
+                "client_metadata": {"session_id": "codex-session", "thread_id": "codex-thread"},
+            },
+        )
+        print(f"Comparing: Expected 'codex-session', Got {conversation_id!r}")
+        assert conversation_id == "codex-session"
+
+    def test_payload_carries_codex_client_metadata_thread_id(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Uses client_metadata.thread_id when session_id is unavailable.
+        Purpose: Keep a stable final Codex-specific fallback.
+        """
+        print("Action: POST /v1/responses with Codex client_metadata.thread_id...")
+        conversation_id = _capture_responses_conversation_id(
+            test_client,
+            valid_proxy_api_key,
+            {
+                "model": "claude-sonnet-4-5",
+                "input": "Hello",
+                "client_metadata": {"thread_id": "codex-thread"},
+            },
+        )
+        print(f"Comparing: Expected 'codex-thread', Got {conversation_id!r}")
+        assert conversation_id == "codex-thread"
+
+    def test_codex_affinity_log_does_not_expose_raw_key(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Logs only the affinity source label for a Codex request.
+        Purpose: Operators can diagnose cache routing without leaking session keys.
+        """
+        print("Action: POST /v1/responses while capturing route debug messages...")
+        raw_key = "codex-secret-session-key"
+        captured = {}
+
+        def _fake_build(request_data, conversation_id, profile_arn):
+            captured["conversation_id"] = conversation_id
+            return {"conversationState": {"conversationId": conversation_id}}
+
+        with (
+            patch("kiro.routes_responses.build_kiro_payload", side_effect=_fake_build),
+            patch("kiro.routes_responses.logger.debug") as debug_log,
+        ):
+            test_client.post(
+                "/v1/responses",
+                headers={"Authorization": f"Bearer {valid_proxy_api_key}"},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "input": "Hello",
+                    "prompt_cache_key": raw_key,
+                },
+            )
+
+        messages = [str(call.args[0]) for call in debug_log.call_args_list if call.args]
+        print(f"Captured debug messages: {messages!r}")
+        assert captured["conversation_id"] == raw_key
+        assert "Conversation cache affinity source: codex_prompt_cache_key" in messages
+        assert all(raw_key not in message for message in messages)

@@ -141,6 +141,46 @@ class ModelInfoCache:
             return model["tokenLimits"].get("maxInputTokens") or DEFAULT_MAX_INPUT_TOKENS
         return DEFAULT_MAX_INPUT_TOKENS
     
+    def get_rate_multiplier(self, model_id: str) -> Optional[float]:
+        """
+        Returns the model's credit rate multiplier.
+
+        The value comes from Kiro's /ListAvailableModels response, so it reflects
+        the account's current pricing tier rather than a hardcoded table.
+
+        Args:
+            model_id: Model ID
+
+        Returns:
+            The multiplier as a float, or None when the cache has no value
+        """
+        model = self._cache.get(model_id)
+        if not model:
+            return None
+        rate = model.get("rateMultiplier")
+        # bool is a subclass of int; a boolean here carries no rate information.
+        if isinstance(rate, (int, float)) and not isinstance(rate, bool):
+            return float(rate)
+        return None
+
+    def get_rate_unit(self, model_id: str) -> Optional[str]:
+        """
+        Returns the unit the model's rate multiplier is expressed in.
+
+        Args:
+            model_id: Model ID
+
+        Returns:
+            The rate unit (e.g. "Credit"), or None when unavailable
+        """
+        model = self._cache.get(model_id)
+        if not model:
+            return None
+        unit = model.get("rateUnit")
+        if isinstance(unit, str) and unit:
+            return unit
+        return None
+
     def is_empty(self) -> bool:
         """
         Checks if the cache is empty.

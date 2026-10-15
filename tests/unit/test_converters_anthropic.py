@@ -12,6 +12,7 @@ Tests for Anthropic Messages API to Kiro format conversion:
 - Full Anthropic → Kiro payload conversion
 """
 
+import json
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -1470,6 +1471,90 @@ class TestAnthropicToKiro:
         assert "currentMessage" in result["conversationState"]
         assert "userInputMessage" in result["conversationState"]["currentMessage"]
         assert result["profileArn"] == "arn:aws:test"
+
+    def test_inline_system_message_keeps_its_position(self):
+        """
+        What it does: Keeps an inline system-role message where the client put it.
+        Purpose: Kiro caches a byte-identical request prefix, so relocating a
+            late-conversation system reminder into the system prompt would
+            invalidate the entire cached prefix on every turn.
+        """
+        print("Setup: Conversation with a late inline system reminder...")
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4-5",
+            system="You are a helpful assistant.",
+            messages=[
+                AnthropicMessage(role="user", content="Hello!"),
+                AnthropicMessage(role="assistant", content="Hi!"),
+                AnthropicMessage(role="system", content="<total_tokens>100 left</total_tokens>"),
+                AnthropicMessage(role="user", content="Next question"),
+            ],
+            max_tokens=1024,
+        )
+
+        print("Action: Converting to Kiro payload...")
+        with patch(
+            "kiro.converters_anthropic.get_model_id_for_kiro",
+            return_value="claude-sonnet-4.5",
+        ):
+            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+                result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
+
+        state = result["conversationState"]
+        history = state["history"]
+        current = state["currentMessage"]["userInputMessage"]["content"]
+        first_history_content = history[0]["userInputMessage"]["content"]
+        print(f"History entries: {len(history)}")
+
+        print("Verifying the reminder stayed with its turn, not in the system prompt...")
+        # The system prompt is prepended to the first history entry, so the
+        # reminder must not appear there.
+        assert "total_tokens" not in first_history_content
+        assert "You are a helpful assistant." in first_history_content
+        # It remains part of the conversation, folded into the turn that followed it.
+        assert "total_tokens" in current
+
+    def test_late_system_reminder_does_not_shift_prefix(self):
+        """
+        What it does: Two turns differing only in a late system reminder keep an
+            identical history prefix.
+        Purpose: Regression test for the cached-prefix invalidation caused by
+            hoisting inline system messages to the front of the payload.
+        """
+        print("Setup: Two consecutive turns of one conversation...")
+
+        def build(reminder):
+            request = AnthropicMessagesRequest(
+                model="claude-sonnet-4-5",
+                system="You are a helpful assistant.",
+                messages=[
+                    AnthropicMessage(role="user", content="Hello!"),
+                    AnthropicMessage(role="assistant", content="Hi!"),
+                    AnthropicMessage(role="system", content=reminder),
+                    AnthropicMessage(role="user", content="Next question"),
+                ],
+                max_tokens=1024,
+            )
+            with patch(
+                "kiro.converters_anthropic.get_model_id_for_kiro",
+                return_value="claude-sonnet-4.5",
+            ):
+                with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+                    return anthropic_to_kiro(request, "conv-123", "arn:aws:test")
+
+        first = build("<total_tokens>200 left</total_tokens>")
+        second = build("<total_tokens>100 left</total_tokens>")
+
+        first_history = first["conversationState"]["history"]
+        second_history = second["conversationState"]["history"]
+        print(f"Comparing prefix entries: {len(first_history)} vs {len(second_history)}")
+
+        print("Verifying the shared prefix is byte-identical...")
+        assert len(first_history) == len(second_history)
+        for index, entry in enumerate(first_history):
+            assert json.dumps(entry, ensure_ascii=False) == json.dumps(
+                second_history[index], ensure_ascii=False
+            ), f"history[{index}] changed between turns"
 
     def test_includes_system_prompt(self):
         """

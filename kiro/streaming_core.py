@@ -360,6 +360,97 @@ async def collect_stream_to_result(
 # Token Counting Utilities
 # ==================================================================================================
 
+def _model_rate(model_cache: Any, model: str) -> Tuple[Optional[float], Optional[str]]:
+    """
+    Reads the model's live credit rate from the model cache.
+
+    Returns (None, None) when the cache is unavailable or has no rate, so callers
+    can omit the field instead of printing a misleading default.
+    """
+    multiplier_getter = getattr(model_cache, "get_rate_multiplier", None)
+    unit_getter = getattr(model_cache, "get_rate_unit", None)
+    try:
+        raw_multiplier = multiplier_getter(model) if callable(multiplier_getter) else None
+        raw_unit = unit_getter(model) if callable(unit_getter) else None
+    except Exception:
+        return None, None
+
+    # Only accept real numbers/strings so an unexpected object (partial mock, a
+    # future cache shape) can never reach log formatting.
+    multiplier = None
+    if isinstance(raw_multiplier, (int, float)) and not isinstance(raw_multiplier, bool):
+        multiplier = float(raw_multiplier)
+    unit = raw_unit if isinstance(raw_unit, str) and raw_unit else None
+    return multiplier, unit
+
+
+def log_usage_summary(
+    model: str,
+    model_cache: Any,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    credits_used: Optional[float] = None,
+    cache_read_tokens: Optional[int] = None,
+) -> None:
+    """
+    Logs one usage summary line per request.
+
+    Includes input/output token counts, the credit amount Kiro actually charged
+    and the model's current rate multiplier, so an unexpectedly high spend can be
+    attributed either to token volume or to the model's pricing tier.
+
+    Args:
+        model: Model ID
+        model_cache: ModelInfoCache providing live rate data
+        prompt_tokens: Input token count
+        completion_tokens: Output token count
+        total_tokens: Total token count
+        credits_used: Credits reported by Kiro's metering event, if any
+        cache_read_tokens: Cache-read tokens, only when upstream reported them
+    """
+    parts = [
+        f"model={model}",
+        f"in={prompt_tokens}",
+        f"out={completion_tokens}",
+        f"total={total_tokens}",
+    ]
+
+    multiplier, unit = _model_rate(model_cache, model)
+    if multiplier is not None:
+        parts.append(f"rate={multiplier:g}" + (f"/{unit}" if unit else ""))
+
+    if cache_read_tokens is not None:
+        parts.append(f"cache_read={cache_read_tokens}")
+
+    if credits_used is not None:
+        parts.append(f"credits={credits_used:g}")
+
+    logger.info("[Usage] " + ", ".join(parts))
+
+
+def extract_credits_used(metering_data: Any) -> Optional[float]:
+    """
+    Extracts the credit amount reported by Kiro's meteringEvent.
+
+    The upstream metering payload carries only a credit value; token-level cache
+    counters are not part of it. Returning None when nothing was reported lets
+    callers omit the field instead of inventing a number.
+
+    Args:
+        metering_data: Value captured from a Kiro `usage` event
+
+    Returns:
+        The credit amount as a float, or None when the stream reported none
+    """
+    # bool is a subclass of int; a boolean here carries no credit information.
+    if isinstance(metering_data, bool):
+        return None
+    if isinstance(metering_data, (int, float)):
+        return float(metering_data)
+    return None
+
+
 def calculate_tokens_from_context_usage(
     context_usage_percentage: Optional[float],
     completion_tokens: int,

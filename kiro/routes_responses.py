@@ -47,7 +47,11 @@ from kiro.streaming_responses import (
     collect_responses_response,
 )
 from kiro.http_client import KiroHttpClient
-from kiro.utils import resolve_conversation_id
+from kiro.utils import (
+    _resolve_conversation_id_with_source,
+    conversation_diagnostic_id,
+    summarize_cache_prefix,
+)
 
 # Reuse the OpenAI endpoint's API-key verification (same Bearer scheme)
 from kiro.routes_openai import verify_api_key, make_usage_reporter
@@ -225,7 +229,10 @@ async def responses(request: Request, request_data: ResponsesRequest):
         # Resolve once per request (not per attempt) so every failover attempt
         # reuses the same upstream prefix-cache affinity key.
         # Responses has no `messages` field - its input is `input`.
-        conversation_id = resolve_conversation_id(request_data, request_data.input)
+        conversation_id, affinity_source = _resolve_conversation_id_with_source(
+            request_data, request_data.input
+        )
+        logger.debug(f"Conversation cache affinity source: {affinity_source}")
 
         for attempt in range(MAX_ATTEMPTS):
             account = await account_manager.get_next_account(
@@ -263,6 +270,9 @@ async def responses(request: Request, request_data: ResponsesRequest):
                     debug_logger.log_kiro_request_body(kiro_request_body)
             except Exception as e:
                 logger.warning(f"Failed to log Kiro request: {e}")
+
+            # Cache-hit diagnosis: shows which prefix component changes per turn
+            logger.info(f"[CachePrefix] {summarize_cache_prefix(kiro_payload)}")
 
             url = f"{auth_manager.api_host}/generateAssistantResponse"
             logger.debug(f"Kiro API URL: {url} (account: {account.id})")
@@ -317,7 +327,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
                 try:
                     error_json = json.loads(error_text)
                     from kiro.kiro_errors import enhance_kiro_error
-                    error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_id)
+                    error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_diagnostic_id(conversation_id))
                     error_reason = error_info.reason
                     last_error_message = error_info.user_message
                     last_error_status = response.status_code
@@ -390,7 +400,10 @@ async def responses(request: Request, request_data: ResponsesRequest):
 
     # Conversation ID doubles as the upstream prefix-cache affinity key.
     # Responses has no `messages` field - its input is `input`.
-    conversation_id = resolve_conversation_id(request_data, request_data.input)
+    conversation_id, affinity_source = _resolve_conversation_id_with_source(
+        request_data, request_data.input
+    )
+    logger.debug(f"Conversation cache affinity source: {affinity_source}")
     profile_arn_for_payload = auth_manager.profile_arn or PROFILE_ARN or ""
 
     try:
@@ -404,6 +417,9 @@ async def responses(request: Request, request_data: ResponsesRequest):
             debug_logger.log_kiro_request_body(kiro_request_body)
     except Exception as e:
         logger.warning(f"Failed to log Kiro request: {e}")
+
+    # Cache-hit diagnosis: shows which prefix component changes per turn
+    logger.info(f"[CachePrefix] {summarize_cache_prefix(kiro_payload)}")
 
     url = f"{auth_manager.api_host}/generateAssistantResponse"
     logger.debug(f"Kiro API URL: {url}")
@@ -429,7 +445,7 @@ async def responses(request: Request, request_data: ResponsesRequest):
             try:
                 error_json = json.loads(error_text)
                 from kiro.kiro_errors import enhance_kiro_error
-                error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_id)
+                error_info = enhance_kiro_error(error_json, model=request_data.model, request_id=conversation_diagnostic_id(conversation_id))
                 error_message = error_info.user_message
             except (json.JSONDecodeError, KeyError):
                 pass

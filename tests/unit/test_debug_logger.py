@@ -58,31 +58,85 @@ class TestDebugLoggerModeOff:
 class TestDebugLoggerModeAll:
     """Тесты для режима DEBUG_MODE=all."""
     
-    def test_prepare_new_request_clears_directory(self, tmp_path):
+    def test_prepare_new_request_archives_previous_request(self, tmp_path):
         """
-        Что он делает: Проверяет, что prepare_new_request очищает директорию в режиме all.
-        Цель: Убедиться, что старые логи удаляются.
+        Что он делает: Проверяет, что prepare_new_request архивирует предыдущий запрос в режиме all.
+        Цель: Убедиться, что логи прошлых запросов не теряются.
         """
-        print("Настройка: Режим all, создаём старый файл...")
+        print("Настройка: Режим all, создаём логи предыдущего запроса...")
         debug_dir = tmp_path / "debug_logs"
         debug_dir.mkdir()
-        old_file = debug_dir / "old_file.txt"
-        old_file.write_text("old content")
-        
+        previous = debug_dir / "request_body.json"
+        previous.write_text('{"previous": true}')
+
         with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
             from kiro.debug_logger import DebugLogger
             logger = DebugLogger.__new__(DebugLogger)
             logger._initialized = False
             logger.__init__()
             logger.debug_dir = debug_dir
-            
+
             print("Действие: Вызов prepare_new_request...")
             logger.prepare_new_request()
-            
-            print(f"Проверяем, что старый файл удалён...")
-            assert not old_file.exists()
-            print(f"Проверяем, что директория существует...")
-            assert debug_dir.exists()
+
+            print("Проверяем, что живой файл убран из корня...")
+            assert not previous.exists()
+
+            print("Проверяем, что предыдущий запрос сохранён в архиве...")
+            archives = list((debug_dir / "requests").iterdir())
+            assert len(archives) == 1
+            assert (archives[0] / "request_body.json").read_text() == '{"previous": true}'
+
+    def test_prepare_new_request_keeps_unrelated_files(self, tmp_path):
+        """
+        Что он делает: Проверяет, что архивируются только файлы запроса.
+        Цель: Не удалять посторонние файлы из директории логов.
+        """
+        print("Настройка: Режим all, посторонний файл рядом с логами...")
+        debug_dir = tmp_path / "debug_logs"
+        debug_dir.mkdir()
+        keep_file = debug_dir / "notes.txt"
+        keep_file.write_text("keep me")
+
+        with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
+            from kiro.debug_logger import DebugLogger
+            logger = DebugLogger.__new__(DebugLogger)
+            logger._initialized = False
+            logger.__init__()
+            logger.debug_dir = debug_dir
+
+            print("Действие: Вызов prepare_new_request...")
+            logger.prepare_new_request()
+
+            print("Проверяем, что посторонний файл остался на месте...")
+            assert keep_file.exists()
+
+    def test_prune_archives_honours_keep_limit(self, tmp_path):
+        """
+        Что он делает: Проверяет, что старые архивы удаляются сверх лимита.
+        Цель: Не дать директории логов расти бесконечно.
+        """
+        print("Настройка: Режим all, создаём архивы сверх лимита...")
+        debug_dir = tmp_path / "debug_logs"
+        requests_dir = debug_dir / "requests"
+        requests_dir.mkdir(parents=True)
+        for index in range(5):
+            (requests_dir / f"2026010{index}T000000.000000").mkdir()
+
+        with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
+            with patch('kiro.debug_logger.DEBUG_KEEP_REQUESTS', 2):
+                from kiro.debug_logger import DebugLogger
+                logger = DebugLogger.__new__(DebugLogger)
+                logger._initialized = False
+                logger.__init__()
+                logger.debug_dir = debug_dir
+
+                print("Действие: Вызов prepare_new_request...")
+                logger.prepare_new_request()
+
+        print("Проверяем, что остались только два последних архива...")
+        remaining = sorted(d.name for d in requests_dir.iterdir())
+        assert remaining == ["20260103T000000.000000", "20260104T000000.000000"]
     
     def test_log_request_body_writes_immediately(self, tmp_path):
         """

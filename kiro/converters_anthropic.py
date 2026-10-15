@@ -279,7 +279,13 @@ def convert_anthropic_messages(
     total_images = 0
 
     for msg in messages:
-        role = msg.role
+        # The Anthropic message schema has no system role, yet clients such as
+        # Claude Code emit system reminders as messages. Kiro only accepts
+        # user/assistant, so map it here rather than dropping it: normalizing
+        # before merge_adjacent_messages() lets the reminder fold into the
+        # neighbouring turn, preserving its position in the conversation. That
+        # position matters because Kiro caches a byte-identical request prefix.
+        role = "user" if msg.role == "system" else msg.role
         content = msg.content
 
         # Extract text content
@@ -450,20 +456,20 @@ def anthropic_to_kiro(
     Raises:
         ValueError: If there are no messages to send
     """
-    # Extract system messages from messages array (some clients send system role in messages)
-    inline_system_parts = []
-    non_system_messages = []
-    for msg in request.messages:
-        if msg.role == "system":
-            inline_system_parts.append(convert_anthropic_content_to_text(msg.content))
-        else:
-            non_system_messages.append(msg)
-
-    if inline_system_parts:
-        logger.debug(f"Extracted {len(inline_system_parts)} system message(s) from messages array")
-
-    # Convert messages to unified format (system messages already removed)
-    unified_messages = convert_anthropic_messages(non_system_messages)
+    # Inline `role: "system"` messages stay where the client put them.
+    #
+    # The Anthropic message schema has no system role, so clients such as Claude
+    # Code emit system reminders as messages. Hoisting every one of them into the
+    # system prompt relocates late-conversation content into the very front of the
+    # payload - notably Claude Code's <total_tokens> context counter, which changes
+    # on every request. Kiro caches a byte-identical request prefix keyed by
+    # conversationId, so hoisting invalidated the whole cached prefix every turn
+    # and every turn was billed at full price.
+    #
+    # Converting them in place keeps the stable part of the conversation stable:
+    # normalize_message_roles() maps the unsupported "system" role to "user" and
+    # merge_adjacent_messages() folds it into the neighbouring turn.
+    unified_messages = convert_anthropic_messages(request.messages)
 
     # Convert tools to unified format
     unified_tools = convert_anthropic_tools(request.tools)
@@ -471,11 +477,6 @@ def anthropic_to_kiro(
     # System prompt is already separate in Anthropic format!
     # It can be a string or list of content blocks (for prompt caching)
     system_prompt = extract_system_prompt(request.system)
-
-    # Append any inline system messages extracted from the messages array
-    if inline_system_parts:
-        inline_system_text = "\n\n".join(inline_system_parts)
-        system_prompt = f"{system_prompt}\n\n{inline_system_text}".strip() if system_prompt else inline_system_text
 
     # Get model ID for Kiro API (normalizes + resolves hidden models)
     # Pass-through principle: we normalize and send to Kiro, Kiro decides if valid
