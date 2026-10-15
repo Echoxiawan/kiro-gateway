@@ -855,8 +855,12 @@ Debug logging is **disabled by default**. To enable, add to your `.env`:
 # Debug logging mode:
 # - off: disabled (default)
 # - errors: save logs only for failed requests (4xx, 5xx) - recommended for troubleshooting
-# - all: save logs for every request (overwrites on each request)
+# - all: save logs for every request and retain per-request history
 DEBUG_MODE=errors
+
+# Number of archived requests to keep under debug_logs/requests/
+# Set to 0 to keep all archives (default: 50)
+# DEBUG_KEEP_REQUESTS=50
 ```
 
 ### Debug Modes
@@ -869,16 +873,19 @@ DEBUG_MODE=errors
 
 ### Debug Files
 
-When enabled, requests are logged to the `debug_logs/` folder:
+When enabled, the root of `debug_logs/` always contains the **latest request**. In `all` mode, previous requests are retained under `debug_logs/requests/<timestamp>/` instead of being overwritten. Set `DEBUG_KEEP_REQUESTS=0` to keep all archives; the default is 50 archived requests.
 
 | File | Description |
 |------|-------------|
-| `request_body.json` | Incoming request from client (OpenAI format) |
+| `request_body.json` | Incoming request from the client |
 | `kiro_request_body.json` | Request sent to Kiro API |
-| `response_stream_raw.txt` | Raw stream from Kiro |
-| `response_stream_modified.txt` | Transformed stream (OpenAI format) |
-| `app_logs.txt` | Application logs for the request |
+| `response_stream_raw.txt` | Raw event stream from Kiro |
+| `response_stream_modified.txt` | Transformed stream sent to the client |
+| `app_logs.txt` | Application logs for the request, including input/output tokens, model rate, and `credits` |
 | `error_info.json` | Error details (only on errors) |
+| `requests/<timestamp>/` | Archived snapshot of an earlier request |
+
+The `[CachePrefix]` log line includes safe fingerprints for the history prefix and tool list. The `[Usage]` log line includes `in`, `out`, `total`, the current model `rate`, and upstream `credits`. Kiro does not currently return token-level cache-read counts, so `credits` is the reliable cache/cost signal.
 
 ---
 

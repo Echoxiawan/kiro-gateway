@@ -77,12 +77,15 @@
 | 🔄 **재시도 로직** | 오류 시 자동 재시도 (403, 429, 5xx) |
 | 📋 **확장 모델 목록** | 버전 모델 포함 |
 | 🔐 **스마트 토큰 관리** | 만료 전 자동 갱신 |
+| 💰 **대화 캐시 친화성** | 클라이언트 세션마다 동일한 `conversationId`를 재사용하여 Kiro 서버 측 prefix 캐시에 적중 (후속 Credits 약 8~10배 절감) |
 
 ---
 
 ## 🆕 이 포크의 새로운 기능
 
 > 이것은 상위(upstream) 프로젝트에 추가 수정 사항과 기능을 더해 유지 관리되는 포크입니다.
+
+- **대화 캐시 친화성** — Kiro는 `conversationId`를 기반으로 암묵적인 서버 측 prefix 캐시를 사용합니다. 게이트웨이는 Codex의 `prompt_cache_key`, Claude Code의 `metadata.user_id.session_id`, 또는 첫 번째 대화 메시지의 해시를 사용합니다. `CONVERSATION_CACHE_AFFINITY`로 제어하며 기본값은 `true`입니다. 실제 비용/캐시 신호는 Credits이며 usage 로그에 입력/출력/총 토큰, 모델 배율, Credits가 표시됩니다.
 
 - **OpenAI Responses API 지원 (`/v1/responses`)** — 스트리밍(SSE), 도구 호출, 추론을 지원하는 OpenAI **Codex CLI**용 네이티브 엔드포인트. Codex가 반환하는 서버 측 추론 항목(`rs_...`)은 안전하게 무시되므로, 상태 비저장(`store: false`) 멀티턴 세션이 `Item with id rs_... not found` 오류 없이 작동합니다.
 - **수정: `system` 역할 메시지로 인한 Claude Code 422 오류** — Anthropic 엔드포인트는 Claude Code가 `messages` 배열 안에 `role: "system"` 메시지를 포함한 요청을 거부했습니다 (`role` 필드가 엄격한 `Literal["user", "assistant"]`로 정의되어 Pydantic 검증에 실패). 이제 이러한 메시지가 허용됩니다.
@@ -803,8 +806,12 @@ Codex가 전송하는 API 키로 `PROXY_API_KEY`를 설정하세요 (예: `OPENA
 # 디버그 로깅 모드:
 # - off: 비활성화 (기본값)
 # - errors: 실패한 요청만 로그 저장 (4xx, 5xx) - 문제 해결에 권장
-# - all: 모든 요청 로그 저장 (요청마다 덮어쓰기)
+# - all: 모든 요청 로그를 저장하고 요청별 기록을 보존
 DEBUG_MODE=errors
+
+# debug_logs/requests/에 보존할 요청 아카이브 수
+# 0으로 설정하면 모두 보존 (기본값: 50)
+# DEBUG_KEEP_REQUESTS=50
 ```
 
 ### 디버그 모드
@@ -817,16 +824,19 @@ DEBUG_MODE=errors
 
 ### 디버그 파일
 
-활성화되면 요청이 `debug_logs/` 폴더에 기록됩니다:
+활성화하면 `debug_logs/` 루트에는 **가장 최근 요청**이 항상 남습니다. `all` 모드에서는 이전 요청이 `debug_logs/requests/<timestamp>/`에 보관되며 덮어쓰지 않습니다. `DEBUG_KEEP_REQUESTS=0`으로 모든 아카이브를 보존할 수 있으며 기본값은 50개입니다.
 
 | 파일 | 설명 |
 |------|------|
-| `request_body.json` | 클라이언트로부터의 수신 요청 (OpenAI 형식) |
-| `kiro_request_body.json` | Kiro API로 전송된 요청 |
-| `response_stream_raw.txt` | Kiro로부터의 원시 스트림 |
-| `response_stream_modified.txt` | 변환된 스트림 (OpenAI 형식) |
-| `app_logs.txt` | 요청에 대한 애플리케이션 로그 |
-| `error_info.json` | 오류 세부 정보 (오류 시에만) |
+| `request_body.json` | 클라이언트에서 받은 요청 |
+| `kiro_request_body.json` | Kiro API로 전송한 요청 |
+| `response_stream_raw.txt` | Kiro의 원시 이벤트 스트림 |
+| `response_stream_modified.txt` | 클라이언트로 전송한 변환 스트림 |
+| `app_logs.txt` | 입력/출력/전체 토큰, 모델 배율, `credits`를 포함한 애플리케이션 로그 |
+| `error_info.json` | 오류 상세 정보 (오류 시에만) |
+| `requests/<timestamp>/` | 이전 요청의 아카이브 |
+
+`[CachePrefix]` 로그에는 기록 prefix와 도구 목록의 안전한 fingerprint가 표시됩니다. `[Usage]` 로그에는 `in`, `out`, `total`, 현재 모델 배율 및 Kiro가 보고한 `credits`가 표시됩니다. Kiro는 현재 토큰 단위 캐시 읽기 수를 반환하지 않으므로 캐시와 비용을 판단하는 신뢰할 수 있는 값은 `credits`입니다.
 
 ---
 

@@ -816,8 +816,12 @@ Codex が送信する API キーとして `PROXY_API_KEY` を設定します（�
 # デバッグログモード：
 # - off：無効（デフォルト）
 # - errors：失敗したリクエストのみログを保存（4xx、5xx）- トラブルシューティングに推奨
-# - all：すべてのリクエストのログを保存（リクエストごとに上書き）
+# - all：すべてのリクエストのログを保存し、リクエストごとの履歴を保持
 DEBUG_MODE=errors
+
+# debug_logs/requests/ に保持するアーカイブ数
+# 0 にするとすべて保持（デフォルト：50）
+# DEBUG_KEEP_REQUESTS=50
 ```
 
 ### デバッグモード
@@ -830,16 +834,19 @@ DEBUG_MODE=errors
 
 ### デバッグファイル
 
-有効にすると、リクエストは `debug_logs/` フォルダにログされます：
+有効にすると、`debug_logs/` のルートには**最新のリクエスト**が保存されます。`all` モードでは過去のリクエストは `debug_logs/requests/<timestamp>/` に保存され、上書きされません。`DEBUG_KEEP_REQUESTS=0` で全アーカイブを保持できます（デフォルトは 50 件）。
 
 | ファイル | 説明 |
 |---------|------|
-| `request_body.json` | クライアントからの受信リクエスト（OpenAI 形式） |
+| `request_body.json` | クライアントから受信したリクエスト |
 | `kiro_request_body.json` | Kiro API に送信されたリクエスト |
-| `response_stream_raw.txt` | Kiro からの生ストリーム |
-| `response_stream_modified.txt` | 変換されたストリーム（OpenAI 形式） |
-| `app_logs.txt` | リクエストのアプリケーションログ |
+| `response_stream_raw.txt` | Kiro からの生イベントストリーム |
+| `response_stream_modified.txt` | クライアントに送信した変換済みストリーム |
+| `app_logs.txt` | 入出力トークン、モデル倍率、`credits` を含むアプリケーションログ |
 | `error_info.json` | エラー詳細（エラー時のみ） |
+| `requests/<timestamp>/` | 過去のリクエストのアーカイブ |
+
+`[CachePrefix]` 行には履歴プレフィックスとツール一覧の安全なフィンガープリントが表示されます。`[Usage]` 行には `in`、`out`、`total`、現在のモデル倍率、Kiro が報告した `credits` が表示されます。Kiro は現在トークン単位のキャッシュ読み取り数を返さないため、キャッシュとコストを判断する信頼できる値は `credits` です。
 
 ---
 

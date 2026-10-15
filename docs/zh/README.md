@@ -854,8 +854,12 @@ wire_api = "responses"
 # 调试日志模式：
 # - off：禁用（默认）
 # - errors：仅保存失败请求的日志（4xx、5xx）- 推荐用于故障排除
-# - all：保存每个请求的日志（每次请求时覆盖）
+# - all：保存每个请求的日志，并保留每个请求的历史
 DEBUG_MODE=errors
+
+# debug_logs/requests/ 中保留的请求归档数量
+# 设置为 0 可保留全部归档（默认：50）
+# DEBUG_KEEP_REQUESTS=50
 ```
 
 ### 调试模式
@@ -868,16 +872,19 @@ DEBUG_MODE=errors
 
 ### 调试文件
 
-启用后，请求将记录到 `debug_logs/` 文件夹：
+启用后，`debug_logs/` 根目录始终保存**最新请求**。在 `all` 模式下，历史请求会保存到 `debug_logs/requests/<timestamp>/`，不会被覆盖。设置 `DEBUG_KEEP_REQUESTS=0` 可保留全部归档；默认保留 50 个。
 
 | 文件 | 描述 |
 |------|------|
-| `request_body.json` | 来自客户端的传入请求（OpenAI 格式） |
+| `request_body.json` | 客户端传入的请求 |
 | `kiro_request_body.json` | 发送到 Kiro API 的请求 |
-| `response_stream_raw.txt` | 来自 Kiro 的原始流 |
-| `response_stream_modified.txt` | 转换后的流（OpenAI 格式） |
-| `app_logs.txt` | 请求的应用程序日志 |
-| `error_info.json` | 错误详情（仅在出错时） |
+| `response_stream_raw.txt` | Kiro 返回的原始事件流 |
+| `response_stream_modified.txt` | 发送给客户端的转换后事件流 |
+| `app_logs.txt` | 请求日志，包括输入/输出/总 token、模型倍率和 `credits` |
+| `error_info.json` | 错误详情（仅出错时） |
+| `requests/<timestamp>/` | 历史请求归档 |
+
+`[CachePrefix]` 日志显示历史前缀和工具列表的安全指纹。`[Usage]` 日志显示 `in`、`out`、`total`、当前模型倍率以及 Kiro 返回的 `credits`。Kiro 当前不返回 token 级缓存读取数量，因此 `credits` 是判断成本和缓存命中的可靠信号。
 
 ---
 

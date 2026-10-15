@@ -77,12 +77,15 @@ Criado por [@Jwadow](https://github.com/jwadow) • Mantido por [@Echoxiawan](ht
 | 🔄 **Lógica de Retry** | Retentativas automáticas em erros (403, 429, 5xx) |
 | 📋 **Lista estendida de modelos** | Incluindo modelos versionados |
 | 🔐 **Gerenciamento inteligente de tokens** | Atualização automática antes da expiração |
+| 💰 **Afinidade de cache da conversa** | Reutiliza o mesmo `conversationId` por sessão do cliente para atingir o cache de prefixo do servidor Kiro (Credits posteriores cerca de 8–10x menores) |
 
 ---
 
 ## 🆕 Novidades Neste Fork
 
 > Este é um fork mantido com correções e recursos adicionais em cima do projeto original.
+
+- **Afinidade de cache da conversa** — O Kiro usa um cache de prefixo implícito no servidor baseado em `conversationId`. O gateway usa `prompt_cache_key` do Codex, `metadata.user_id.session_id` do Claude Code ou o hash da primeira mensagem da conversa. Controlado por `CONVERSATION_CACHE_AFFINITY` (padrão `true`). Credits são o sinal real de custo/cache; o log de uso mostra tokens de entrada/saída, total de tokens, multiplicador do modelo e Credits.
 
 - **Suporte à OpenAI Responses API (`/v1/responses`)** — Endpoint nativo para o OpenAI **Codex CLI**, com streaming (SSE), chamada de ferramentas e raciocínio. Itens de raciocínio do lado do servidor (`rs_...`) enviados de volta pelo Codex são ignorados com segurança, então sessões multiturno sem estado (`store: false`) funcionam sem erros `Item with id rs_... not found`.
 - **Correção: erros 422 do Claude Code causados por mensagens com role `system`** — O endpoint Anthropic rejeitava requisições em que o Claude Code incluía uma mensagem `role: "system"` dentro do array `messages` (o campo `role` era um `Literal["user", "assistant"]` estrito, falhando na validação Pydantic). Essas mensagens agora são aceitas.
@@ -803,8 +806,12 @@ O log de depuração está **desabilitado por padrão**. Para habilitar, adicion
 # Modo de log de depuração:
 # - off: desabilitado (padrão)
 # - errors: salvar logs apenas para requisições com falha (4xx, 5xx) - recomendado para solução de problemas
-# - all: salvar logs para cada requisição (sobrescreve a cada requisição)
+# - all: salvar logs para cada requisição e manter o histórico por requisição
 DEBUG_MODE=errors
+
+# Número de requisições arquivadas mantidas em debug_logs/requests/
+# Use 0 para manter todas (padrão: 50)
+# DEBUG_KEEP_REQUESTS=50
 ```
 
 ### Modos de Depuração
@@ -817,16 +824,19 @@ DEBUG_MODE=errors
 
 ### Arquivos de Depuração
 
-Quando habilitado, as requisições são registradas na pasta `debug_logs/`:
+Quando habilitado, a raiz de `debug_logs/` sempre contém a **requisição mais recente**. No modo `all`, as requisições anteriores são mantidas em `debug_logs/requests/<timestamp>/` e não são sobrescritas. Use `DEBUG_KEEP_REQUESTS=0` para manter todos os arquivos; o padrão é 50.
 
 | Arquivo | Descrição |
 |---------|-----------|
-| `request_body.json` | Requisição recebida do cliente (formato OpenAI) |
+| `request_body.json` | Requisição recebida do cliente |
 | `kiro_request_body.json` | Requisição enviada para a API Kiro |
-| `response_stream_raw.txt` | Stream bruto do Kiro |
-| `response_stream_modified.txt` | Stream transformado (formato OpenAI) |
-| `app_logs.txt` | Logs da aplicação para a requisição |
+| `response_stream_raw.txt` | Stream de eventos bruto do Kiro |
+| `response_stream_modified.txt` | Stream transformado enviado ao cliente |
+| `app_logs.txt` | Logs da requisição, incluindo tokens de entrada/saída, multiplicador do modelo e `credits` |
 | `error_info.json` | Detalhes do erro (apenas em erros) |
+| `requests/<timestamp>/` | Arquivo histórico de uma requisição anterior |
+
+A linha `[CachePrefix]` mostra fingerprints seguros do prefixo do histórico e da lista de ferramentas. A linha `[Usage]` mostra `in`, `out`, `total`, o multiplicador atual do modelo e os `credits` informados pelo Kiro. O Kiro atualmente não retorna contadores de tokens lidos do cache; `credits` é o sinal confiável de custo e cache.
 
 ---
 

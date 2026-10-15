@@ -816,8 +816,12 @@ El registro de depuración está **deshabilitado por defecto**. Para habilitar, 
 # Modo de registro de depuración:
 # - off: deshabilitado (predeterminado)
 # - errors: guardar logs solo para solicitudes fallidas (4xx, 5xx) - recomendado para solución de problemas
-# - all: guardar logs para cada solicitud (sobrescribe en cada solicitud)
+# - all: guardar logs para cada solicitud y conservar el historial por solicitud
 DEBUG_MODE=errors
+
+# Número de solicitudes archivadas que se conservan en debug_logs/requests/
+# Usa 0 para conservar todos los archivos (predeterminado: 50)
+# DEBUG_KEEP_REQUESTS=50
 ```
 
 ### Modos de Depuración
@@ -830,16 +834,19 @@ DEBUG_MODE=errors
 
 ### Archivos de Depuración
 
-Cuando está habilitado, las solicitudes se registran en la carpeta `debug_logs/`:
+Cuando está habilitado, la raíz de `debug_logs/` siempre contiene la **solicitud más reciente**. En modo `all`, las solicitudes anteriores se conservan en `debug_logs/requests/<timestamp>/` y no se sobrescriben. Usa `DEBUG_KEEP_REQUESTS=0` para conservar todos los archivos; el valor predeterminado es 50.
 
 | Archivo | Descripción |
 |---------|-------------|
-| `request_body.json` | Solicitud entrante del cliente (formato OpenAI) |
+| `request_body.json` | Solicitud entrante del cliente |
 | `kiro_request_body.json` | Solicitud enviada a la API de Kiro |
-| `response_stream_raw.txt` | Stream crudo de Kiro |
-| `response_stream_modified.txt` | Stream transformado (formato OpenAI) |
-| `app_logs.txt` | Logs de la aplicación para la solicitud |
+| `response_stream_raw.txt` | Stream de eventos sin procesar de Kiro |
+| `response_stream_modified.txt` | Stream transformado enviado al cliente |
+| `app_logs.txt` | Logs de la solicitud, incluidos tokens de entrada/salida, tarifa del modelo y `credits` |
 | `error_info.json` | Detalles del error (solo en errores) |
+| `requests/<timestamp>/` | Archivo histórico de una solicitud anterior |
+
+La línea `[CachePrefix]` muestra huellas seguras del prefijo del historial y de las herramientas. La línea `[Usage]` muestra `in`, `out`, `total`, la tarifa actual del modelo y los `credits` informados por Kiro. Kiro no devuelve actualmente contadores de tokens leídos desde caché; `credits` es la señal fiable de coste y caché.
 
 ---
 

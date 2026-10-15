@@ -77,12 +77,15 @@ Dibuat oleh [@Jwadow](https://github.com/jwadow) • Dipelihara oleh [@Echoxiawa
 | 🔄 **Logika Retry** | Retry otomatis saat error (403, 429, 5xx) |
 | 📋 **Daftar model diperluas** | Termasuk model berversi |
 | 🔐 **Manajemen token cerdas** | Refresh otomatis sebelum kedaluwarsa |
+| 💰 **Afinitas cache percakapan** | Menggunakan kembali `conversationId` untuk setiap sesi klien agar mengenai cache prefix sisi server Kiro (Credits lanjutan sekitar 8–10x lebih rendah) |
 
 ---
 
 ## 🆕 Apa yang Baru di Fork Ini
 
 > Ini adalah fork yang terpelihara dengan perbaikan dan fitur tambahan di atas proyek upstream.
+
+- **Afinitas cache percakapan** — Kiro menggunakan cache prefix implisit berbasis `conversationId`. Gateway memakai `prompt_cache_key` Codex, `metadata.user_id.session_id` Claude Code, atau hash pesan percakapan pertama. Dikendalikan oleh `CONVERSATION_CACHE_AFFINITY` (default `true`). Credits adalah sinyal biaya/cache yang sebenarnya; log usage menampilkan token masuk/keluar, total token, multiplier model, dan credits.
 
 - **Dukungan OpenAI Responses API (`/v1/responses`)** — Endpoint native untuk OpenAI **Codex CLI**, dengan streaming (SSE), pemanggilan alat, dan penalaran. Item penalaran sisi server (`rs_...`) yang dikirim kembali oleh Codex diabaikan dengan aman, sehingga sesi multi-giliran tanpa status (`store: false`) bekerja tanpa error `Item with id rs_... not found`.
 - **Perbaikan: Error 422 Claude Code dari pesan dengan role `system`** — Endpoint Anthropic menolak request di mana Claude Code menyertakan pesan `role: "system"` di dalam array `messages` (field `role` adalah `Literal["user", "assistant"]` yang ketat, sehingga gagal validasi Pydantic). Pesan seperti itu kini diterima.
@@ -803,8 +806,12 @@ Logging debug **dinonaktifkan secara default**. Untuk mengaktifkan, tambahkan ke
 # Mode logging debug:
 # - off: dinonaktifkan (default)
 # - errors: simpan log hanya untuk request yang gagal (4xx, 5xx) - direkomendasikan untuk troubleshooting
-# - all: simpan log untuk setiap request (ditimpa setiap request)
+# - all: simpan log untuk setiap request dan pertahankan riwayat per request
 DEBUG_MODE=errors
+
+# Jumlah arsip request yang disimpan di debug_logs/requests/
+# Gunakan 0 untuk menyimpan semuanya (default: 50)
+# DEBUG_KEEP_REQUESTS=50
 ```
 
 ### Mode Debug
@@ -817,16 +824,19 @@ DEBUG_MODE=errors
 
 ### File Debug
 
-Ketika diaktifkan, request dicatat ke folder `debug_logs/`:
+Saat diaktifkan, root `debug_logs/` selalu berisi **request terbaru**. Dalam mode `all`, request sebelumnya disimpan di `debug_logs/requests/<timestamp>/` dan tidak ditimpa. Gunakan `DEBUG_KEEP_REQUESTS=0` untuk menyimpan semua arsip; default-nya 50.
 
 | File | Deskripsi |
 |------|-----------|
-| `request_body.json` | Request masuk dari klien (format OpenAI) |
+| `request_body.json` | Request yang diterima dari klien |
 | `kiro_request_body.json` | Request yang dikirim ke Kiro API |
-| `response_stream_raw.txt` | Stream mentah dari Kiro |
-| `response_stream_modified.txt` | Stream yang ditransformasi (format OpenAI) |
-| `app_logs.txt` | Log aplikasi untuk request |
+| `response_stream_raw.txt` | Stream event mentah dari Kiro |
+| `response_stream_modified.txt` | Stream yang sudah diubah dan dikirim ke klien |
+| `app_logs.txt` | Log request, termasuk token masuk/keluar, multiplier model, dan `credits` |
 | `error_info.json` | Detail error (hanya saat error) |
+| `requests/<timestamp>/` | Arsip request sebelumnya |
+
+Baris `[CachePrefix]` menampilkan fingerprint aman untuk prefix riwayat dan daftar tools. Baris `[Usage]` menampilkan `in`, `out`, `total`, multiplier model saat ini, dan `credits` dari Kiro. Kiro saat ini tidak mengembalikan jumlah token cache-read, jadi `credits` adalah sinyal biaya dan cache yang dapat dipercaya.
 
 ---
 

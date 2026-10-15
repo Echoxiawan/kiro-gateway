@@ -11,6 +11,22 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 
+@pytest.fixture(autouse=True)
+def _isolate_request_state():
+    """
+    Clears the per-request logging state around each test.
+
+    In production every request runs in its own asyncio task, so the context
+    variable isolates them. Tests share one context, so it must be reset here or
+    a state set by one test leaks into the next.
+    """
+    from kiro.debug_logger import _current_state
+
+    _current_state.set(None)
+    yield
+    _current_state.set(None)
+
+
 class TestDebugLoggerModeOff:
     """Тесты для режима DEBUG_MODE=off."""
     
@@ -58,16 +74,14 @@ class TestDebugLoggerModeOff:
 class TestDebugLoggerModeAll:
     """Тесты для режима DEBUG_MODE=all."""
     
-    def test_prepare_new_request_archives_previous_request(self, tmp_path):
+    def test_prepare_new_request_gets_own_directory(self, tmp_path):
         """
-        Что он делает: Проверяет, что prepare_new_request архивирует предыдущий запрос в режиме all.
-        Цель: Убедиться, что логи прошлых запросов не теряются.
+        Что он делает: Проверяет, что prepare_new_request выдаёт запросу отдельную директорию.
+        Цель: Убедиться, что одновременные запросы не пишут в общие файлы.
         """
-        print("Настройка: Режим all, создаём логи предыдущего запроса...")
+        print("Настройка: Режим all...")
         debug_dir = tmp_path / "debug_logs"
         debug_dir.mkdir()
-        previous = debug_dir / "request_body.json"
-        previous.write_text('{"previous": true}')
 
         with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
             from kiro.debug_logger import DebugLogger
@@ -76,16 +90,47 @@ class TestDebugLoggerModeAll:
             logger.__init__()
             logger.debug_dir = debug_dir
 
-            print("Действие: Вызов prepare_new_request...")
+            print("Действие: Вызов prepare_new_request дважды...")
             logger.prepare_new_request()
+            first_dir = logger._state().directory
+            logger.prepare_new_request()
+            second_dir = logger._state().directory
 
-            print("Проверяем, что живой файл убран из корня...")
-            assert not previous.exists()
+            print("Проверяем, что каждый запрос получил свою директорию...")
+            assert first_dir != second_dir
+            assert first_dir.parent == debug_dir / "requests"
+            assert second_dir.parent == debug_dir / "requests"
 
-            print("Проверяем, что предыдущий запрос сохранён в архиве...")
-            archives = list((debug_dir / "requests").iterdir())
-            assert len(archives) == 1
-            assert (archives[0] / "request_body.json").read_text() == '{"previous": true}'
+            print("Проверяем, что симлинк latest указывает на последний запрос...")
+            latest = debug_dir / "latest"
+            assert latest.is_symlink()
+            assert latest.resolve() == second_dir.resolve()
+
+    def test_concurrent_requests_do_not_share_files(self, tmp_path):
+        """
+        Что он делает: Проверяет, что два параллельных запроса не перезаписывают файлы друг друга.
+        Цель: Защитить от смешивания логов при одновременных клиентах.
+        """
+        print("Настройка: Режим all...")
+        debug_dir = tmp_path / "debug_logs"
+
+        with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
+            from kiro.debug_logger import DebugLogger
+            logger = DebugLogger.__new__(DebugLogger)
+            logger._initialized = False
+            logger.__init__()
+            logger.debug_dir = debug_dir
+
+            print("Действие: Два запроса пишут через собственное состояние...")
+            from kiro.debug_logger import _RequestLogState
+            state_a = _RequestLogState(directory=debug_dir / "requests" / "a")
+            state_b = _RequestLogState(directory=debug_dir / "requests" / "b")
+            logger._write_request_body_to_file(b'{"who": "a"}', state_a.directory)
+            logger._write_request_body_to_file(b'{"who": "b"}', state_b.directory)
+
+            print("Проверяем, что тела запросов не смешались...")
+            assert json.loads((state_a.directory / "request_body.json").read_text())["who"] == "a"
+            assert json.loads((state_b.directory / "request_body.json").read_text())["who"] == "b"
 
     def test_prepare_new_request_keeps_unrelated_files(self, tmp_path):
         """
@@ -134,9 +179,10 @@ class TestDebugLoggerModeAll:
                 print("Действие: Вызов prepare_new_request...")
                 logger.prepare_new_request()
 
-        print("Проверяем, что остались только два последних архива...")
+        print("Проверяем, что лишние архивы удалены, а лимит соблюдён...")
         remaining = sorted(d.name for d in requests_dir.iterdir())
-        assert remaining == ["20260103T000000.000000", "20260104T000000.000000"]
+        assert len(remaining) == 2, f"expected 2 archives, got {remaining}"
+        assert "20260104T000000.000000" in remaining
     
     def test_log_request_body_writes_immediately(self, tmp_path):
         """
@@ -242,7 +288,7 @@ class TestDebugLoggerModeErrors:
             assert not debug_dir.exists()
             
             print(f"Проверяем, что данные в буфере...")
-            assert logger._request_body_buffer == test_data
+            assert logger._state().request_body == test_data
     
     def test_flush_on_error_writes_buffers(self, tmp_path):
         """
@@ -301,10 +347,8 @@ class TestDebugLoggerModeErrors:
             logger.flush_on_error(500, "Error")
             
             print(f"Проверяем, что буферы очищены...")
-            assert logger._request_body_buffer is None
-            assert logger._kiro_request_body_buffer is None
-            assert len(logger._raw_chunks_buffer) == 0
-            assert len(logger._modified_chunks_buffer) == 0
+            from kiro.debug_logger import _current_state
+            assert _current_state.get() is None, "request state must be released after flush"
     
     def test_discard_buffers_clears_without_writing(self, tmp_path):
         """
@@ -331,8 +375,8 @@ class TestDebugLoggerModeErrors:
             assert not debug_dir.exists()
             
             print(f"Проверяем, что буферы очищены...")
-            assert logger._request_body_buffer is None
-            assert len(logger._raw_chunks_buffer) == 0
+            from kiro.debug_logger import _current_state
+            assert _current_state.get() is None, "request state must be released after discard"
     
     def test_flush_on_error_writes_error_info_in_mode_all(self, tmp_path):
         """
@@ -588,10 +632,10 @@ class TestDebugLoggerAppLogsCapture:
             dbg_logger.prepare_new_request()
             
             print(f"Проверяем, что sink создан...")
-            assert dbg_logger._loguru_sink_id is not None
+            assert dbg_logger._state().sink_id is not None
             
             # Очистка
-            dbg_logger._clear_app_logs_buffer()
+            dbg_logger._finalize_state(dbg_logger._state())
     
     def test_flush_on_error_writes_app_logs_in_mode_errors(self, tmp_path):
         """
@@ -617,13 +661,15 @@ class TestDebugLoggerAppLogsCapture:
             dbg_logger.log_request_body(b'{"test": "data"}')
             
             # Пишем тестовый лог напрямую в буфер (имитация)
-            dbg_logger._app_logs_buffer.write("Test log message\n")
+            dbg_logger._state().app_logs.write("Test log message\n")
             
+            state_dir = dbg_logger._state().directory
+
             print("Действие: Вызов flush_on_error...")
             dbg_logger.flush_on_error(500, "Test Error")
             
             print(f"Проверяем, что app_logs.txt создан...")
-            app_logs_file = debug_dir / "app_logs.txt"
+            app_logs_file = state_dir / "app_logs.txt"
             assert app_logs_file.exists()
             
             print(f"Проверяем содержимое...")
@@ -651,13 +697,15 @@ class TestDebugLoggerAppLogsCapture:
             dbg_logger.prepare_new_request()
             
             # Пишем тестовый лог напрямую в буфер
-            dbg_logger._app_logs_buffer.write("Success log message\n")
+            dbg_logger._state().app_logs.write("Success log message\n")
             
+            state_dir = dbg_logger._state().directory
+
             print("Действие: Вызов discard_buffers...")
             dbg_logger.discard_buffers()
             
             print(f"Проверяем, что app_logs.txt создан...")
-            app_logs_file = debug_dir / "app_logs.txt"
+            app_logs_file = state_dir / "app_logs.txt"
             assert app_logs_file.exists()
             
             print(f"Проверяем содержимое...")
@@ -684,7 +732,7 @@ class TestDebugLoggerAppLogsCapture:
             dbg_logger.prepare_new_request()
             
             # Пишем тестовый лог напрямую в буфер
-            dbg_logger._app_logs_buffer.write("Should not be saved\n")
+            dbg_logger._state().app_logs.write("Should not be saved\n")
             
             print("Действие: Вызов discard_buffers...")
             dbg_logger.discard_buffers()
@@ -692,30 +740,32 @@ class TestDebugLoggerAppLogsCapture:
             print(f"Проверяем, что директория НЕ создана...")
             assert not debug_dir.exists()
     
-    def test_clear_app_logs_buffer_removes_sink(self, tmp_path):
+    def test_finalize_state_detaches_sink(self, tmp_path):
         """
-        Что он делает: Проверяет, что _clear_app_logs_buffer удаляет sink.
-        Цель: Убедиться, что sink корректно удаляется.
+        Что он делает: Проверяет, что завершение запроса удаляет его sink.
+        Цель: Убедиться, что sink корректно удаляется и состояние не утекает.
         """
         print("Настройка: Режим all...")
         with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
             from kiro.debug_logger import DebugLogger
-            
+            from kiro.debug_logger import _current_state
+
             dbg_logger = DebugLogger.__new__(DebugLogger)
             dbg_logger._initialized = False
             dbg_logger.__init__()
             dbg_logger.debug_dir = tmp_path / "debug_logs"
-            
+
             # Настраиваем захват логов
             dbg_logger.prepare_new_request()
-            sink_id = dbg_logger._loguru_sink_id
-            assert sink_id is not None
-            
-            print("Действие: Вызов _clear_app_logs_buffer...")
-            dbg_logger._clear_app_logs_buffer()
-            
-            print(f"Проверяем, что sink_id сброшен...")
-            assert dbg_logger._loguru_sink_id is None
+            state = dbg_logger._state()
+            assert state.sink_id is not None
+
+            print("Действие: Завершение состояния запроса...")
+            dbg_logger._finalize_state(state)
+
+            print(f"Проверяем, что sink сброшен и состояние освобождено...")
+            assert state.sink_id is None
+            assert _current_state.get() is None
     
     def test_app_logs_not_saved_when_empty(self, tmp_path):
         """
@@ -736,9 +786,12 @@ class TestDebugLoggerAppLogsCapture:
             
             # НЕ пишем ничего в буфер
             
+            state = dbg_logger._state()
+            state.directory.mkdir(parents=True, exist_ok=True)
+
             print("Действие: Вызов _write_app_logs_to_file...")
-            dbg_logger._write_app_logs_to_file()
+            dbg_logger._write_app_logs_to_file(state)
             
             print(f"Проверяем, что app_logs.txt НЕ создан...")
-            app_logs_file = debug_dir / "app_logs.txt"
+            app_logs_file = state.directory / "app_logs.txt"
             assert not app_logs_file.exists()
